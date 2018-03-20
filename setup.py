@@ -14,7 +14,7 @@ setup(
 		packages = ['cocentric'],
 		install_requires = requirements,
 		setup_requires = ['setuptools_scm'],
-		use_scm_version = {'write_to': 'cocentric/version.py'},
+		use_scm_version = {'write_to': 'colonyscopy/version.py'},
 		classifiers = [
 				'Development Status :: Alpha',
 				'License :: OSI Approved :: BSD License',
