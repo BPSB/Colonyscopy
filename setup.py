@@ -11,7 +11,7 @@ setup(
 		description = 'Analysis of colony growth over time.',
 		long_description = open('README.rst', encoding='utf8').read(),
 		python_requires=">=3.3",
-		packages = ['cocentric'],
+		packages = ['colonyscopy'],
 		install_requires = requirements,
 		setup_requires = ['setuptools_scm'],
 		use_scm_version = {'write_to': 'colonyscopy/version.py'},
