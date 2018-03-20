@@ -1,0 +1,4 @@
+**/*.pyc
+dist/
+**/__pycache__
+colonyscopy/version.py
