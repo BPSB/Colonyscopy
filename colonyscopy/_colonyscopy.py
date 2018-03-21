@@ -1,3 +1,3 @@
 def dummy():
-	return 42
+	return 38
 
