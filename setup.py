@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 from setuptools import setup
 from io import open
 
@@ -14,6 +16,7 @@ setup(
 		packages = ['colonyscopy'],
 		install_requires = requirements,
 		setup_requires = ['setuptools_scm'],
+		tests_require = ['pytest'],
 		use_scm_version = {'write_to': 'colonyscopy/version.py'},
 		classifiers = [
 				'Development Status :: Alpha',
