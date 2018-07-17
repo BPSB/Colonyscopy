@@ -1,3 +1,6 @@
-def dummy():
-	return 38
+
+
+class ColonyArray(object):
+	def __init__(array):
+		self.array = array
 
