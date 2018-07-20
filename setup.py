@@ -15,7 +15,7 @@ setup(
 		python_requires=">=3.3",
 		packages = ['colonyscopy'],
 		install_requires = requirements,
-		setup_requires = ['setuptools_scm'],
+		setup_requires = ['setuptools_scm','pytest-runner'],
 		tests_require = ['pytest'],
 		use_scm_version = {'write_to': 'colonyscopy/version.py'},
 		classifiers = [
