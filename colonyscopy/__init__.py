@@ -1,4 +1,4 @@
-from ._colonyscopy import dummy
+from ._colonyscopy import ColonyArray
 
 try:
 	from .version import version as __version__

@@ -1,4 +1,4 @@
-
+import numpy as np
 
 class ColonyArray(object):
 	"""
@@ -7,13 +7,13 @@ class ColonyArray(object):
 		Parameters
 		----------
 		array : NumPy array
-			An three-dimensional array containing all the raw data.
-			The first two dimensions are spacial, the third dimension is time.
+			A four-dimensional array containing all the raw data.
+			The first dimension is time; the next two dimensions are spacial; the last dimension has length 3 and is colour.
 		
 		dimensions : pair of integers
 			The number of colonies in each direction of the colony array.
 	"""
-	def __init__(array,dimensions=(12,8)):
+	def __init__(self,array,dimensions=(12,8)):
 		self.array = array
 		self.format = np.asarray(dimensions,dtype=int)
 	
