@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.signal import argrelmax
-from colonyscopy.tools import smoothen
+from colonyscopy.tools import smoothen, color_distance
 
 class ColonyscopyFailedHeuristic(Exception):
 	pass
@@ -52,12 +52,12 @@ class ColonyArray(object):
 		"""
 		Tries to automatically segment the images into individual colonies.
 		"""
-		intensities = np.abs(np.sum(self.temp_mean-self.background,axis=2))
+		intensities = color_distance(self.temp_mean,self.background)
 		profiles = [np.average(intensities,axis=i) for i in (1,0)]
 		
 		for smooth_width in range(1,int(self.resolution[0]/self.dimensions[0])):
-			smoothed_profiles = [smoothen(profiles[i],smooth_width) for i in (0,1)]
-			self._coordinates = [argrelmax(smoothed_profiles[i])[0] for i in (0,1)]
+			smooth_profiles = [smoothen(profiles[i],smooth_width) for i in (0,1)]
+			self._coordinates = [argrelmax(smooth_profiles[i])[0] for i in (0,1)]
 			if all(
 					len(self._coordinates[i]) == self.dimensions[i]
 					for i in (0,1)
