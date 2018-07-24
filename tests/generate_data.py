@@ -13,9 +13,8 @@ def colony_centres(dimensions,resolution):
 	Returns a 3D array, containing the coordinates of the centres of each tile.
 	"""
 	return np.dstack(np.meshgrid(*[
-			midpoints(dimensions[i],resolution[i])
-			for i in (1,0)
-		]))
+			midpoints(dimensions[i],resolution[i]) for i in (0,1)
+		],indexing="ij"))
 
 def generate_data(colony_sizes,resolution,bg=(0,0,0),fg=(255,255,255)):
 	"""
@@ -70,5 +69,4 @@ def test_generate_data():
 				for i,j in product(*map(range,dimensions))
 			)
 		assert np.all(data[(time,*pos)] == (fg if is_colony else bg))
-
 
