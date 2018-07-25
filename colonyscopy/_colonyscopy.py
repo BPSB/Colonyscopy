@@ -34,13 +34,23 @@ class ColonyArray(object):
 		
 		dimensions : pair of integers
 			The number of colonies in each direction of the colony array.
+		
+		bg : array-like or None
+			The background, i.e., what to expect in absence of colonies.
+			
+			* If `None`, the background will be guessed automatically.
+			* If a length-three sequence, the background will be taken to be homogeneous in that color.
+			* If an array with the same dimensions as an image, this will be taken as a background image.
 	"""
 	
-	def __init__(self,images,dimensions=(12,8)):
+	def __init__(self,images,dimensions=(12,8),bg=None):
 		self.images = images
 		self.dimensions = np.asarray(dimensions,dtype=int)
-		self.background = np.average(images,axis=(0,1,2))
 		self.resolution = images.shape[1:3]
+		if bg is None:
+			self.background = np.average(images[0],axis=(0,1))
+		else:
+			self.background = np.asarray(bg,dtype=np.uint8)
 	
 	@property
 	def temp_mean(self):
