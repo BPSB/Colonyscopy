@@ -1,4 +1,4 @@
-from ._colonyscopy import ColonyArray
+from ._colonyscopy import Plate
 
 try:
 	from .version import version as __version__

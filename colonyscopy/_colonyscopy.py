@@ -7,7 +7,7 @@ class ColonyscopyFailedHeuristic(Exception):
 
 class Colony(object):
 	"""
-		Class representing a single colony array.
+		Class representing a single colony.
 		
 		Parameters
 		----------
@@ -22,9 +22,9 @@ class Colony(object):
 		self.images = images
 		self.centre = np.asarray(centre,dtype=int)
 
-class ColonyArray(object):
+class Plate(object):
 	"""
-		The basic class for handling colony arrays.
+		The basic class for handling plates with colonies.
 		
 		Parameters
 		----------
@@ -32,8 +32,8 @@ class ColonyArray(object):
 			A four-dimensional array containing all the raw data.
 			The first dimension is time; the next two dimensions are spacial; the last dimension has length 3 and is colour.
 		
-		dimensions : pair of integers
-			The number of colonies in each direction of the colony array.
+		format : pair of integers
+			The number of colonies in each direction of the plate.
 		
 		bg : array-like or None
 			The background, i.e., what to expect in absence of colonies.
@@ -43,9 +43,9 @@ class ColonyArray(object):
 			* If an array with the same dimensions as an image, this will be taken as a background image.
 	"""
 	
-	def __init__(self,images,dimensions=(12,8),bg=None):
+	def __init__(self,images,format=(12,8),bg=None):
 		self.images = images
-		self.dimensions = np.asarray(dimensions,dtype=int)
+		self.format = np.asarray(format,dtype=int)
 		self.resolution = images.shape[1:3]
 		if bg is None:
 			self.background = np.average(images[0],axis=(0,1))
@@ -65,22 +65,22 @@ class ColonyArray(object):
 		intensities = color_distance(self.temp_mean,self.background)
 		profiles = [np.average(intensities,axis=i) for i in (1,0)]
 		
-		for smooth_width in range(1,int(self.resolution[0]/self.dimensions[0])):
+		for smooth_width in range(1,int(self.resolution[0]/self.format[0])):
 			smooth_profiles = [smoothen(profiles[i],smooth_width) for i in (0,1)]
 			self._coordinates = [argrelmax(smooth_profiles[i])[0] for i in (0,1)]
 			if all(
-					len(self._coordinates[i]) == self.dimensions[i]
+					len(self._coordinates[i]) == self.format[i]
 					for i in (0,1)
 				):
 				break
 		else:
 			raise ColonyscopyFailedHeuristic("Could not detect colony coordinates. ")
-		# for smooth_width in range(1,int(self.resolution[0]/self.dimensions[0])):
+		# for smooth_width in range(1,int(self.resolution[0]/self.format[0])):
 		# 	self._coordinates = [None,None]
 		# 	for i in (0,1):
 		# 		smoothened_profile = smoothen(profiles[i],smooth_width)
 		# 		self._coordinates[i] = argrelmax(smoothened_profile)[0]
-		# 		if len(self._coordinates[i]) != self.dimensions[i]:
+		# 		if len(self._coordinates[i]) != self.format[i]:
 		# 			# Continue outer loop:
 		# 			print(self._coordinates)
 		# 			break
