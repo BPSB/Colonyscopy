@@ -32,7 +32,7 @@ class Plate(object):
 			A four-dimensional array containing all the raw data.
 			The first dimension is time; the next two dimensions are spacial; the last dimension has length 3 and is colour.
 		
-		format : pair of integers
+		layout : pair of integers
 			The number of colonies in each direction of the plate.
 		
 		bg : array-like or None
@@ -43,9 +43,9 @@ class Plate(object):
 			* If an array with the same dimensions as an image, this will be taken as a background image.
 	"""
 	
-	def __init__(self,images,format=(12,8),bg=None):
+	def __init__(self,images,layout=(12,8),bg=None):
 		self.images = images
-		self.format = np.asarray(format,dtype=int)
+		self.layout = np.asarray(layout,dtype=int)
 		self.resolution = images.shape[1:3]
 		if bg is None:
 			self.background = np.average(images[0],axis=(0,1))
@@ -65,27 +65,27 @@ class Plate(object):
 		intensities = color_distance(self.temp_mean,self.background)
 		profiles = [np.average(intensities,axis=i) for i in (1,0)]
 		
-		for smooth_width in range(1,int(self.resolution[0]/self.format[0])):
+		for smooth_width in range(1,int(self.resolution[0]/self.layout[0])):
 			smooth_profiles = [smoothen(profiles[i],smooth_width) for i in (0,1)]
 			self._coordinates = [argrelmax(smooth_profiles[i])[0] for i in (0,1)]
 			if all(
-					len(self._coordinates[i]) == self.format[i]
+					len(self._coordinates[i]) == self.layout[i]
 					for i in (0,1)
 				):
 				break
 		else:
 			raise ColonyscopyFailedHeuristic("Could not detect colony coordinates. ")
-		# for smooth_width in range(1,int(self.resolution[0]/self.format[0])):
+		# for smooth_width in range(1,int(self.resolution[0]/self.layout[0])):
 		# 	self._coordinates = [None,None]
 		# 	for i in (0,1):
 		# 		smoothened_profile = smoothen(profiles[i],smooth_width)
 		# 		self._coordinates[i] = argrelmax(smoothened_profile)[0]
-		# 		if len(self._coordinates[i]) != self.format[i]:
+		# 		if len(self._coordinates[i]) != self.layout[i]:
 		# 			# Continue outer loop:
 		# 			print(self._coordinates)
 		# 			break
 		# 	else:
-		# 		# If inner loop was not broken (i.e., the number of maxima and the format match), break outer loop:
+		# 		# If inner loop was not broken (i.e., the number of maxima and the layout match), break outer loop:
 		# 		break
 		# else:
 		# 	# If outer loop was not broken:
