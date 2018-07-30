@@ -1,4 +1,5 @@
 from scipy.signal.windows import blackman
+from scipy.signal import convolve2d
 import numpy as np
 from PIL import Image
 import time
@@ -8,6 +9,14 @@ def smoothen(data,width):
 	kernel = blackman(width)
 	kernel /= np.sum(kernel)
 	return np.convolve(data,kernel,mode="same")
+
+def smoothen_image(data,width):
+	kernel = blackman(width)[:,None]*blackman(width)
+	kernel /= np.sum(kernel)
+	result = np.empty_like(data)
+	for i in range(3):
+		result[:,:,i] = convolve2d(data[:,:,i],kernel,mode="same")
+	return result
 
 def color_distance(data1,data2):
 	"""
