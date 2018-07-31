@@ -1,6 +1,7 @@
 import numpy as np
 from itertools import product
 from pytest import approx, mark
+from colonyscopy.tools import smoothen_image
 
 def midpoints(number,length):
 	"""
@@ -20,11 +21,11 @@ def colony_centres(layout,resolution):
 def generate_data(
 			colony_sizes, resolution,
 			bg=(0,0,0), fg=(255,255,255),
-			noise_amplitude = 0,
+			noise_amplitude=0, noise_width=10,
 			rim_width=0, rim_color=(255,255,255)
 		):
 	"""
-	Genererates artefical datasets for testing purposes.
+	Genererates artifical datasets for testing purposes.
 	
 	Parameters
 	----------
@@ -75,6 +76,8 @@ def generate_data(
 	if noise_amplitude:
 		for time in range(times):
 			noise = np.random.normal(0,noise_amplitude,(*resolution,3))
+			if noise_width:
+				noise = smoothen_image(noise,noise_width)
 			result[time] += noise.astype(np.uint8)
 	
 	return result
@@ -94,7 +97,7 @@ def test_generate_data(homogoneous_bg):
 		bg = np.random.randint(0,256,(*resolution,3))
 	rim_width = 3
 	
-	data = generate_data(colony_sizes,resolution,bg,fg,0,rim_width,rim_color)
+	data = generate_data(colony_sizes,resolution,bg,fg,0,0,rim_width,rim_color)
 	
 	centres = colony_centres(layout,resolution)
 	for _ in range(1000):
@@ -133,7 +136,7 @@ def test_noise(homogoneous_bg):
 	noise_amplitude = 5
 	
 	data = [
-			generate_data(colony_sizes,resolution,bg,fg,noise,rim_width,rim_color)
+			generate_data(colony_sizes,resolution,bg,fg,noise,0,rim_width,rim_color)
 			for noise in (0,noise_amplitude)
 		]
 	
