@@ -66,30 +66,19 @@ class Plate(object):
 		profiles = [np.average(intensities,axis=i) for i in (1,0)]
 		
 		for smooth_width in range(1,int(self.resolution[0]/self.layout[0])):
-			smooth_profiles = [smoothen(profiles[i],smooth_width) for i in (0,1)]
-			self._coordinates = [argrelmax(smooth_profiles[i])[0] for i in (0,1)]
-			if all(
-					len(self._coordinates[i]) == self.layout[i]
-					for i in (0,1)
-				):
+			self._coordinates = [None,None]
+			for i in (0,1):
+				smooth_profile = smoothen(profiles[i],smooth_width)
+				self._coordinates[i] = argrelmax(smooth_profile)[0]
+				if len(self._coordinates[i]) != self.layout[i]:
+					# bad smooth width → continue outer loop
+					break
+			else:
+				# good smooth width → break outer loop
 				break
 		else:
-			raise ColonyscopyFailedHeuristic("Could not detect colony coordinates. ")
-		# for smooth_width in range(1,int(self.resolution[0]/self.layout[0])):
-		# 	self._coordinates = [None,None]
-		# 	for i in (0,1):
-		# 		smoothened_profile = smoothen(profiles[i],smooth_width)
-		# 		self._coordinates[i] = argrelmax(smoothened_profile)[0]
-		# 		if len(self._coordinates[i]) != self.layout[i]:
-		# 			# Continue outer loop:
-		# 			print(self._coordinates)
-		# 			break
-		# 	else:
-		# 		# If inner loop was not broken (i.e., the number of maxima and the layout match), break outer loop:
-		# 		break
-		# else:
-		# 	# If outer loop was not broken:
-		# 	raise ColonyscopyFailedHeuristic("Could not detect colony coordinates. ")
+			# no good smooth width at all:
+			raise ColonyscopyFailedHeuristic("Could not detect colony coordinates.")
 	
 	@property
 	def coordinates(self):
