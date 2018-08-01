@@ -1,3 +1,4 @@
+from itertools import product
 from scipy.signal.windows import blackman
 from scipy.signal import convolve2d
 import numpy as np
@@ -32,3 +33,25 @@ def show_image(array):
 	for proc in psutil.process_iter():
 		if proc.name() == "display":
 			proc.kill()
+
+def radial_profile(data,centre,nbins=100):
+	r_max= max(
+			np.hypot(corner,centre)
+			for corner in product(*zip((0,0),data.shape))
+		)
+	
+	coordinates = np.indices(data.shape).transpose(1,2,0)
+	radii = np.linalg.norm( coordinates-centre, axis=2 )
+	bins = np.minimum((radii*nbins/r_max).astype(int),nbins)
+	normalisation = np.zeros(nbins,dtype=int)
+	summe = np.zeros(nbins)
+	
+	for i in range(data.shape[0]):
+		for j in range(data.shape[1]):
+			normalisation[bins[i,j]] += 1
+			summe[bins[i,j]] += data[i,j]
+	
+	return summe/normalisation
+	
+
+
