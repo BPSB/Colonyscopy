@@ -14,13 +14,19 @@ class Colony(object):
 		images : NumPy array
 			A four-dimensional array containing the data for the actual colony. This can be a slice of a bigger array. The first dimension is time; the next two dimensions are spacial; the last dimension has length 3 and is colour.
 		
-		centre : pair of integers
-			The centre of the colony in the coordinates of `images`.
+		background : NumPy array
+			A three-dimensional array containing the background, i.e., what to expect in the absence of a colony. Thi first two dimensions are spacial; the last dimension has length 3 and is colour.
 	"""
 	
-	def __init__(self,images,centre):
+	def __init__(self,images,background):
 		self.images = images
-		self.centre = np.asarray(centre,dtype=int)
+		self.background = background
+	
+	def intensity(self):
+		return sum(
+				np.sum(color_distance(image,self.background))
+				for image in images
+			)
 
 class Plate(object):
 	"""

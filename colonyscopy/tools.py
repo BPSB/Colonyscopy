@@ -24,34 +24,39 @@ def color_distance(data1,data2):
 	Determines the L1 norm between the two input arrays in color space. The color axis must be the last axis.
 	"""
 	assert data1.shape[-1]==3
-	return np.sum(np.abs(data1-data2),axis=-1)
+	assert data2.shape[-1]==3
+	return np.sum(np.abs(np.subtract(data1,data2,dtype=float)),axis=-1)
 
-def show_image(array):
-	img = Image.fromarray(array,"RGB")
+class TestColorDistance(object):
+	def test_symmetry(self):
+		size = (200,100,3)
+		x = np.random.randint(0,256,size=size,dtype=np.uint8)
+		y = np.random.randint(0,256,size=size,dtype=np.uint8)
+		np.testing.assert_array_equal(
+				color_distance(x,y),
+				color_distance(y,x),
+			)
+	
+	def test_shape(self):
+		size = (200,100,3)
+		x = np.random.randint(0,256,size=size,dtype=np.uint8)
+		y = np.random.randint(0,256,size=size,dtype=np.uint8)
+		np.testing.assert_array_equal(color_distance(x,y).shape,size[:-1])
+
+def show_image(array,mode="RGB"):
+	img = Image.fromarray(array,mode)
 	img.show()
 	time.sleep(3)
 	for proc in psutil.process_iter():
 		if proc.name() == "display":
 			proc.kill()
 
-def radial_profile(data,centre,nbins=100):
-	r_max= max(
-			np.hypot(corner,centre)
-			for corner in product(*zip((0,0),data.shape))
-		)
-	
-	coordinates = np.indices(data.shape).transpose(1,2,0)
-	radii = np.linalg.norm( coordinates-centre, axis=2 )
-	bins = np.minimum((radii*nbins/r_max).astype(int),nbins)
-	normalisation = np.zeros(nbins,dtype=int)
-	summe = np.zeros(nbins)
-	
-	for i in range(data.shape[0]):
-		for j in range(data.shape[1]):
-			normalisation[bins[i,j]] += 1
-			summe[bins[i,j]] += data[i,j]
-	
-	return summe/normalisation
-	
-
+def radial_profile(data,centre,nbins=100,r_max=None):
+	radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
+	r_max = r_max or np.max(radii)*(nbins+0.5)/nbins
+	bin_centres = np.linspace(0,r_max,2*nbins+1)[1::2]
+	bins = (radii*(nbins/r_max)).ravel().astype(int)
+	values = np.bincount( bins, data.ravel() )
+	normalisation = np.bincount(bins)
+	return bin_centres,values/normalisation
 
