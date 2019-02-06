@@ -11,13 +11,20 @@ def smoothen(data,width):
 	kernel /= np.sum(kernel)
 	return np.convolve(data,kernel,mode="same")
 
-def smoothen_image(data,width):
+def smoothen_image(image,width):
 	kernel = blackman(width)[:,None]*blackman(width)
 	kernel /= np.sum(kernel)
-	result = np.empty_like(data)
+	result = np.empty_like(image)
 	for i in range(3):
-		result[:,:,i] = convolve2d(data[:,:,i],kernel,mode="same")
+		result[:,:,i] = convolve2d(image[:,:,i],kernel,mode="same")
 	return result
+
+def expand_mask(mask,width):
+	centre = np.array([width,width])
+	coordinates = np.indices((2*width+1,2*width+1))
+	distances = np.linalg.norm(coordinates-centre[:,None,None],axis=0)
+	kernel = (distances <= width).astype(float)
+	return convolve2d(mask,kernel,mode="same").astype(bool)
 
 def color_distance(data1,data2):
 	"""
