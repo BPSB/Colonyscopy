@@ -25,15 +25,23 @@ class TestExpandMask(object):
 		random_mask = np.random.choice([True,False],size=(100,80))
 		assert_array_equal( expand_mask(random_mask,0), random_mask )
 	
-	def test_single_point(self):
-		size = (100,100)
-		point = (50,50)
+	def test_points(self):
+		size = (100,80)
+		points = np.vstack([
+				np.random.randint(n,size=5)
+				for n in size
+			]).T
 		radius = 13
 		mask = np.zeros(size,dtype=bool)
-		mask[point] = True
+		for point in points:
+			mask[tuple(point)] = True
 		expanded_mask = expand_mask(mask,radius)
 		for i in range(size[0]):
 			for j in range(size[1]):
-				dist = np.linalg.norm([point[0]-i,point[1]-j])
+				dist = min(
+						np.linalg.norm(point-[i,j])
+						for point in points
+					)
 				assert (dist<=radius) == expanded_mask[i,j]
+
 
