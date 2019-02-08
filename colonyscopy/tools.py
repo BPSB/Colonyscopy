@@ -20,6 +20,9 @@ def smoothen_image(image,width):
 	return result
 
 def expand_mask(mask,width):
+	"""
+	Expands `mask` (array of booleans) by setting all elments within a distance of `width` to a True element to True.
+	"""
 	centre = np.array([width,width])
 	coordinates = np.indices((2*width+1,2*width+1))
 	distances = np.linalg.norm(coordinates-centre[:,None,None],axis=0)
