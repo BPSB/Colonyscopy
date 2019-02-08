@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.signal import argrelmax
+from scipy.signal import argrelmax, argrelmin, savgol_filter
 from colonyscopy.tools import smoothen, color_distance
 
 class ColonyscopyFailedHeuristic(Exception):
@@ -53,6 +53,7 @@ class Plate(object):
 		self.images = images
 		self.layout = np.asarray(layout,dtype=int)
 		self.resolution = images.shape[1:3]
+		self.n_colours = 3
 		if bg is None:
 			self.background = np.average(images[0],axis=(0,1))
 		else:
@@ -114,5 +115,32 @@ class Plate(object):
 					self.resolution[i]))
 				for i in (0,1)
 			]
+	
+	def gradient_mask(self,threshold=3000):
+		"""
+		returns pixels in the background with a high gradient
+		"""
+		return np.linalg.norm(np.gradient(self.background,axis=(0,1)),axis=(0,3)) > threshold
+	
+	def create_speckle_mask(self):
+		a = np.sum(np.gradient(self.background)[0]+np.gradient(self.background)[1], axis=-1) > 3000
+		b = np.sum(self.background,axis=-1) > np.mean(np.sum(self.background,axis=-1))+4*np.std(np.sum(self.background,axis=-1))
+		self._speckle_mask = a+b+self.temp_speckle_mask()
+		self._speckle_mask = np.logical_not(smoothen_mask(self._speckle_mask,4))
 
+	def temp_speckle_mask(self):
+		matrix = np.zeros((np.shape(MyFirstPlate.images)[1],np.shape(MyFirstPlate.images)[2]),dtype=bool)
+		matrix[:,:] += (color_distance(self.images[0,:,:,:],self.background[:,:,:]) > 1200)
+		for t in range(np.shape(MyFirstPlate.images)[0]-1):
+			matrix[:,:] += (color_distance(self.images[t+1,:,:,:],self.images[t,:,:,:]) > 1200)
+		return matrix
+	
+	@property
+	def speckle_mask(self):
+		"""
+		Returns the mask for colony area for this plate.
+		"""
+		if not hasattr(self,"_speckle_mask"):
+			self.create_speckle_mask()
+		return self._speckle_mask
 
