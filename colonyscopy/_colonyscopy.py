@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.signal import argrelmax, argrelmin, savgol_filter
+from scipy.signal import argrelmax, argrelmin
 from colonyscopy.tools import smoothen, color_distance
 
 class ColonyscopyFailedHeuristic(Exception):
@@ -142,17 +142,27 @@ class Plate(object):
 			matrix |= color_distance(self.images[t+1],self.images[t]) > threshold
 		return matrix
 	
-	def create_speckle_mask(self,gradient_threshold=3000):
-		a = np.sum(np.gradient(self.background)[0]+np.gradient(self.background)[1], axis=-1) > 3000
-		b = np.sum(self.background,axis=-1) > np.mean(np.sum(self.background,axis=-1))+4*np.std(np.sum(self.background,axis=-1))
-		self._speckle_mask = a+b+self.temp_speckle_mask()
-		self._speckle_mask = np.logical_not(smoothen_mask(self._speckle_mask,4))
-
+	def create_speckle_mask(self,
+				gradient_threshold = 3000,
+				intensity_factor = 4,
+				temporal_threshold = 1200,
+				expansion = 4,
+			):
+		"""
+		Tries to automatically detect speckles.
+		
+		TODO:
+		explain parameters
+		"""
+		self._speckle_mask = expand_mask(
+				  self._gradient_mask(gradient_threshold)
+				& self._intensity_mask(intensity_factor)
+				& self._temporal_mask(temporal_threshold),
+				width = expansion
+			)
+	
 	@property
 	def speckle_mask(self):
-		"""
-		Returns the mask for colony area for this plate.
-		"""
 		if not hasattr(self,"_speckle_mask"):
 			self.create_speckle_mask()
 		return self._speckle_mask
