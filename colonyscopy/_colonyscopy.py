@@ -118,10 +118,19 @@ class Plate(object):
 	
 	def gradient_mask(self,threshold=3000):
 		"""
-		returns pixels in the background with a high gradient
+		Returns pixels in the background with a high gradient.
 		"""
 		return np.linalg.norm(np.gradient(self.background,axis=(0,1)),axis=(0,3)) > threshold
 	
+	def intensity_mask(self,factor):
+		"""
+		Returns pixels of the background whose intensity is outside of `factor` times the standard deviation of all pixels.
+		"""
+		background_intensity = np.sum(self.background,axis=-1)
+		return background_intensity > np.mean(background_intensity)+factor*np.std(background_intensity)
+		
+		#TODO: include particularly dark pixels, work with percentiles.
+
 	def create_speckle_mask(self):
 		a = np.sum(np.gradient(self.background)[0]+np.gradient(self.background)[1], axis=-1) > 3000
 		b = np.sum(self.background,axis=-1) > np.mean(np.sum(self.background,axis=-1))+4*np.std(np.sum(self.background,axis=-1))

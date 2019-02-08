@@ -1,3 +1,4 @@
+from pytest import mark
 import numpy as np
 from colonyscopy import Plate
 from colonyscopy.tools import expand_mask
@@ -10,29 +11,33 @@ dummy_plate = Plate(
 		bg = np.zeros([*size,ncolours]),
 	)
 
-class TestGradientMask(object):
-	def test_dimensions(self):
+@mark.parametrize("apply_mask",[
+		lambda plate: plate.gradient_mask(threshold=1e-5),
+		lambda plate: plate.intensity_mask(factor=4),
+	])
+class TestMasks(object):
+	def test_dimensions(self,apply_mask):
 		background = np.random.randint(0,256,(*size,ncolours))
 		dummy_plate.background = background
-		mask = dummy_plate.gradient_mask(threshold=1e-5)
+		mask = apply_mask(dummy_plate)
 		assert mask.shape == size
 	
-	def test_colour_independence(self):
+	def test_colour_independence(self,apply_mask):
 		background = np.random.randint(0,256,ncolours)*np.ones((*size,1),dtype=np.uint8)
 		dummy_plate.background = background
-		mask = dummy_plate.gradient_mask(threshold=1e-5)
+		mask = apply_mask(dummy_plate)
 		assert not np.any(mask)
 	
-	def test_point(self):
+	def test_point(self,apply_mask):
 		point = tuple([np.random.randint(x) for x in size])
 		colour = np.random.randint(ncolours)
 		background = np.zeros((*size,ncolours),dtype=np.uint8)
 		background[(*point,colour)] = 1
-		print(background[point[0]-5:point[0]+5,point[1]-5:point[1]+5,colour])
 		
 		dummy_plate.background = background
-		mask = dummy_plate.gradient_mask(threshold=1e-5)
+		mask = apply_mask(dummy_plate)
 		
 		assert expand_mask(mask,1)[point]
 		far_from_point = np.logical_not(expand_mask(background[:,:,colour]>0,2))
 		assert not np.any(mask[far_from_point])
+
