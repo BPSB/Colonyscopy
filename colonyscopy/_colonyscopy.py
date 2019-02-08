@@ -54,6 +54,7 @@ class Plate(object):
 		self.layout = np.asarray(layout,dtype=int)
 		self.resolution = images.shape[1:3]
 		self.n_colours = 3
+		self.n_times = images.shape[3]
 		if bg is None:
 			self.background = np.average(images[0],axis=(0,1))
 		else:
@@ -116,13 +117,13 @@ class Plate(object):
 				for i in (0,1)
 			]
 	
-	def gradient_mask(self,threshold=3000):
+	def _gradient_mask(self,threshold):
 		"""
 		Returns pixels in the background with a high gradient.
 		"""
 		return np.linalg.norm(np.gradient(self.background,axis=(0,1)),axis=(0,3)) > threshold
 	
-	def intensity_mask(self,factor):
+	def _intensity_mask(self,factor):
 		"""
 		Returns pixels of the background whose intensity is outside of `factor` times the standard deviation of all pixels.
 		"""
@@ -130,20 +131,23 @@ class Plate(object):
 		return background_intensity > np.mean(background_intensity)+factor*np.std(background_intensity)
 		
 		#TODO: include particularly dark pixels, work with percentiles.
-
-	def create_speckle_mask(self):
+	
+	def _temporal_mask(self,threshold):
+		"""
+		Returns pixels where the colour changes suddenly in time.
+		"""
+		matrix = np.zeros(self.resolution,dtype=bool)
+		matrix |= color_distance(self.images[0],self.background) > threshold
+		for t in range(self.n_times):
+			matrix |= color_distance(self.images[t+1],self.images[t]) > threshold
+		return matrix
+	
+	def create_speckle_mask(self,gradient_threshold=3000):
 		a = np.sum(np.gradient(self.background)[0]+np.gradient(self.background)[1], axis=-1) > 3000
 		b = np.sum(self.background,axis=-1) > np.mean(np.sum(self.background,axis=-1))+4*np.std(np.sum(self.background,axis=-1))
 		self._speckle_mask = a+b+self.temp_speckle_mask()
 		self._speckle_mask = np.logical_not(smoothen_mask(self._speckle_mask,4))
 
-	def temp_speckle_mask(self):
-		matrix = np.zeros((np.shape(MyFirstPlate.images)[1],np.shape(MyFirstPlate.images)[2]),dtype=bool)
-		matrix[:,:] += (color_distance(self.images[0,:,:,:],self.background[:,:,:]) > 1200)
-		for t in range(np.shape(MyFirstPlate.images)[0]-1):
-			matrix[:,:] += (color_distance(self.images[t+1,:,:,:],self.images[t,:,:,:]) > 1200)
-		return matrix
-	
 	@property
 	def speckle_mask(self):
 		"""
