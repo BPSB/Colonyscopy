@@ -166,4 +166,40 @@ class Plate(object):
 		if not hasattr(self,"_speckle_mask"):
 			self.create_speckle_mask()
 		return self._speckle_mask
+	
+	def create_colonies(self):
+		self._colonies = np.array([
+				[Colony(TODO) for i in layout[0]]
+				for j in layout[1]
+			],dtype=object)
+	
+	@property
+	def colonies(self):
+		if not hasattr(self,"_colonies"):
+			self.create_colonies()
+		return self._colonies
+	
+	def all_colonies(self):
+		"""
+			Returns a generator over all colonies of the plate.
+		"""
+		for i in layout[0]:
+			for j in layout[1]:
+				yield self._colonies[i][j]
+	
+	def __iter__(self):
+		return self.colonies.__iter__()
+	
+	def __getitem__(self,arg):
+		return self.colonies[arg]
+	
+	def localise_colonies(self,*args,**kwargs):
+		"""
+			Calls colony.localise for all colonies (with the respective arguments).
+		"""
+		for colony in self.all_colonies():
+			colony.localise(*args,**kwargs)
+
+
+
 
