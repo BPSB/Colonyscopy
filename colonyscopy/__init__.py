@@ -1,4 +1,4 @@
-from ._colonyscopy import Plate
+from ._colonyscopy import Plate, Colony, ColonyscopyFailedHeuristic
 
 try:
 	from .version import version as __version__
