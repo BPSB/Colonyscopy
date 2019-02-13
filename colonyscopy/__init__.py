@@ -1,4 +1,5 @@
 from ._colonyscopy import Plate, Colony, ColonyscopyFailedHeuristic
+from .tools import smoothen, smoothen_image, expand_mask, color_distance
 
 try:
 	from .version import version as __version__

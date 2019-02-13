@@ -44,7 +44,7 @@ class TestColorDistance(object):
 				color_distance(x,y),
 				color_distance(y,x),
 			)
-	
+
 	def test_shape(self):
 		size = (200,100,3)
 		x = np.random.randint(0,256,size=size,dtype=np.uint8)
@@ -67,4 +67,3 @@ def radial_profile(data,centre,nbins=100,r_max=None):
 	values = np.bincount( bins, data.ravel() )
 	normalisation = np.bincount(bins)
 	return bin_centres,values/normalisation
-

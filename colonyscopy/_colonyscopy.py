@@ -2,6 +2,7 @@ import numpy as np
 from scipy.signal import argrelmax, argrelmin
 from colonyscopy.tools import smoothen, color_distance, expand_mask
 import matplotlib.pyplot as plt
+from warnings import warn
 
 class ColonyscopyFailedHeuristic(Exception):
 	pass
@@ -33,8 +34,8 @@ class Colony(object):
 		intensity = np.empty((self.n_colours,self.n_times))
 		for t in range(self.n_times):
 			for m in range(self.n_colours):
-				bg_intensity[m,t] = np.sum(np.multiply(self.background_mask,self.images[t,:,:,m]))/np.sum(self.background_mask)
-				col_intensity[m,t] = np.sum(np.multiply(self.mask,self.images[t,:,:,m]))/np.sum(self.mask)
+				bg_intensity[m,t] = np.mean(self.images[t,:,:,m][self.background_mask])
+				col_intensity[m,t] = np.mean(self.images[t,:,:,m][self.mask])
 		intensity = np.sum(col_intensity - bg_intensity, axis=0)
 		return intensity
 
@@ -44,24 +45,23 @@ class Colony(object):
 		"""
 		self._mask = np.empty(self.resolution)
 		a = [np.sum(np.multiply(color_distance(self.images[t],self.background),self.speckle_mask))/(np.sum(self.speckle_mask)) for t in range(self.n_times)]
-		print(a)
 		a = smoothen(a, smooth_width)
 		try:
 			t = list(a > seg_intensity_threshold).index(True)
 		except(ValueError):
 			t = -1
-			print("Segment intensity threshold was not reached. Colony area mask was created from last picture in time lapse.")
-		self._mask = np.multiply(np.sum(self.images[t], axis=-1), self.speckle_mask) > cutoff_factor * np.max(np.sum(self.images[t], axis=-1))
+			warn("Segment intensity threshold was not reached. Colony area mask was created from last picture in time lapse.")
+		self._mask = np.sum(self.images[t], axis=-1) > cutoff_factor * np.max(np.sum(self.images[t], axis=-1))
 
 	@property
-	def background_mask(self, expansion = 4):
+	def background_mask(self):
 		"""
 		Returns the mask for background pixels in this segment.
 
 		TODO: explain parameter
 		"""
 		if not hasattr(self,"_background_mask"):
-			self.create_background_mask(expansion)
+			self.create_background_mask()
 		return self._background_mask
 
 	def create_background_mask(self, expansion = 4):
@@ -73,12 +73,12 @@ class Colony(object):
 		self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion)) + np.logical_not(self.speckle_mask)
 
 	@property
-	def mask(self, seg_intensity_threshold = 1000, smooth_width = 5, cutoff_factor = 0.5):
+	def mask(self):
 		"""
 		Returns the mask for colony area for this segment.
 		"""
 		if not hasattr(self,"_mask"):
-			self.create_mask(seg_intensity_threshold, smooth_width, cutoff_factor)
+			self.create_mask()
 		return self._mask
 
 	def segment_intensity(self):
@@ -113,7 +113,7 @@ class Plate(object):
 			* If an array with the same dimensions as an image, this will be taken as a background image.
 	"""
 
-	def __init__(self,images,layout=(12,8),bg=None):
+	def __init__(self,images,layout=(8,12),bg=None):
 		self.images = images
 		self.layout = np.asarray(layout,dtype=int)
 		self.resolution = images.shape[1:3]
@@ -150,7 +150,7 @@ class Plate(object):
 				break
 		else:
 			# no good smooth width at all:
-			raise ColonyscopyFailedHeuristic("Could not detect colony coordinates.")
+			raise ColonyscopyFailedHeuristic("Could not detect colony coordinates. Check if layout in right order.")
 
 	@property
 	def coordinates(self):
@@ -176,7 +176,7 @@ class Plate(object):
 		return [
 				np.hstack((
 					0,
-					(self.coordinates[i][1:]+self.coordinates[i][:-1])/2,
+					((self.coordinates[i][1:]+self.coordinates[i][:-1])/2).astype(int),
 					self.resolution[i]))
 				for i in (0,1)
 			]
@@ -232,10 +232,14 @@ class Plate(object):
 		return self._speckle_mask
 
 	def create_colonies(self):
-		self._colonies = np.array([
-				[Colony(TODO) for i in layout[0]]
-				for j in layout[1]
-			],dtype=object)
+		x = self.borders[0]
+		y = self.borders[1]
+		self._colonies = np.array(
+				[Colony(self.images[:,x[i]:x[i+1],y[j]:y[j+1],:],
+						self.background[x[i]:x[i+1],y[j]:y[j+1],:],
+						self.speckle_mask[x[i]:x[i+1],y[j]:y[j+1]]) for i in range(self.layout[0])
+				for j in range(self.layout[1])]
+			, dtype=object)
 
 	@property
 	def colonies(self):
