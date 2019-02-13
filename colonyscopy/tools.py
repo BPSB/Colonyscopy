@@ -29,6 +29,9 @@ def expand_mask(mask,width):
 	kernel = (distances <= width).astype(float)
 	return convolve2d(mask,kernel,mode="same").astype(bool)
 
+def color_sum(data):
+	return np.sum(data, axis=-1)
+
 def color_distance(data1,data2):
 	"""
 	Determines the L1 norm between the two input arrays in color space. The color axis must be the last axis.

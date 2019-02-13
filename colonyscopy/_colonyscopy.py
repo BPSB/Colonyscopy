@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.signal import argrelmax, argrelmin
-from colonyscopy.tools import smoothen, color_distance, expand_mask
+from colonyscopy.tools import smoothen, color_distance, expand_mask, color_sum
 import matplotlib.pyplot as plt
 from warnings import warn
 
@@ -29,14 +29,14 @@ class Colony(object):
 		self.n_times = images.shape[0]
 
 	def colony_intensity(self):
-		bg_intensity = np.empty((self.n_colours,self.n_times))
-		col_intensity = np.empty((self.n_colours,self.n_times))
-		intensity = np.empty((self.n_colours,self.n_times))
+		bg_intensity = np.empty((self.n_times,self.n_colours))
+		col_intensity = np.empty((self.n_times,self.n_colours))
+		intensity = np.empty((self.n_times,self.n_colours))
 		for t in range(self.n_times):
 			for m in range(self.n_colours):
-				bg_intensity[m,t] = np.mean(self.images[t,:,:,m][self.background_mask])
-				col_intensity[m,t] = np.mean(self.images[t,:,:,m][self.mask])
-		intensity = np.sum(col_intensity - bg_intensity, axis=0)
+				bg_intensity[t,m] = np.mean(self.images[t,:,:,m][self.background_mask])
+				col_intensity[t,m] = np.mean(self.images[t,:,:,m][self.mask])
+		intensity = color_sum((col_intensity - bg_intensity))
 		return intensity
 
 	@property
@@ -54,7 +54,7 @@ class Colony(object):
 		"""
 		t = self.threshold_timepoint
 		self._mask = np.empty(self.resolution)
-		self._mask = np.sum(self.images[t], axis=-1) > cutoff_factor * np.max(np.sum(self.images[t], axis=-1))
+		self._mask = color_sum(self.images[t]) > cutoff_factor * np.max(color_sum(self.images[t]))
 
 	@property
 	def threshold_timepoint(self):
@@ -68,7 +68,7 @@ class Colony(object):
 		return self._threshold_timepoint
 
 	def create_threshold_timepoint(self, seg_intensity_threshold = 1000, smooth_width = 5):
-		a = [np.mean(np.sum(self.images[t], axis=-1)[self.speckle_mask]) for t in range(self.n_times)]
+		a = [np.mean(color_sum(self.images[t])[self.speckle_mask]) for t in range(self.n_times)]
 		a = smoothen(a, smooth_width)
 		print(a)
 		try:
@@ -98,7 +98,7 @@ class Colony(object):
 		self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion)) + np.logical_not(self.speckle_mask)
 
 	def segment_intensity(self):
-		return np.array([np.sum(np.sum(np.multiply(np.sum(self.images[t],axis=-1),self.speckle_mask),axis=-1),axis=-1) for t in range(self.n_times)]/np.sum(self.speckle_mask))
+		return np.array([np.sum(np.sum(np.multiply(color_sum(self.images[t]),self.speckle_mask),axis=-1),axis=-1) for t in range(self.n_times)]/np.sum(self.speckle_mask))
 
 	def plot_segment_intensity(self,smooth_width = 5, seg_intensity_threshold = 1000):
 		plt.plot(self.segment_intensity(), label='Segment intensity')
@@ -207,7 +207,7 @@ class Plate(object):
 		"""
 		Returns pixels of the background whose intensity is outside of `factor` times the standard deviation of all pixels.
 		"""
-		background_intensity = np.sum(self.background,axis=-1)
+		background_intensity = color_sum(self.background)
 		return background_intensity > np.mean(background_intensity)+factor*np.std(background_intensity)
 
 		#TODO: include particularly dark pixels, work with percentiles.
