@@ -101,3 +101,19 @@ class TestBackgroundMask(object):
         dummy_colony.create_threshold_timepoint(seg_intensity_threshold = seg_intensity_threshold)
         dummy_mask = dummy_colony.background_mask
         assert not dummy_mask[point]
+
+class TestThresholdTimepoint(object):
+    def test_single_point_appearing(self):
+        seg_intensity_threshold = 100
+        point = tuple([np.random.randint(x) for x in size])
+        colour = np.random.randint(ncolours)
+        images = np.zeros((times,*size,ncolours),dtype=np.uint16)
+        timepoint = np.random.randint(times-1)
+        for t in range(times-timepoint):
+            images[(t+timepoint,*point,colour)] = 2*seg_intensity_threshold*np.multiply(*size)
+        dummy_colony = Colony(
+        images = images,
+        background = np.zeros((*size,ncolours)),
+        speckle_mask = np.ones((size), dtype=bool))
+        dummy_colony.create_threshold_timepoint(seg_intensity_threshold = seg_intensity_threshold)
+        assert dummy_colony.threshold_timepoint == timepoint
