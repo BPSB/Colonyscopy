@@ -28,8 +28,9 @@ class TestColonyAreaMask(object):
         images = images,
         background = np.zeros((*size,ncolours)),
         speckle_mask = np.ones(size, dtype=bool))
-        dummy_colony.create_mask(seg_intensity_threshold)
+        dummy_colony.create_threshold_timepoint(seg_intensity_threshold = seg_intensity_threshold)
         dummy_mask = dummy_colony.mask
+        print(dummy_mask)
         assert dummy_mask[point]
         assert np.sum(dummy_mask) == 1
 
@@ -97,6 +98,6 @@ class TestBackgroundMask(object):
         images = images,
         background = np.zeros((*size,ncolours)),
         speckle_mask = np.ones(size, dtype=bool))
-        dummy_colony.create_mask(seg_intensity_threshold)
+        dummy_colony.create_threshold_timepoint(seg_intensity_threshold = seg_intensity_threshold)
         dummy_mask = dummy_colony.background_mask
         assert not dummy_mask[point]

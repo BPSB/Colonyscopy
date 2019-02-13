@@ -39,19 +39,44 @@ class Colony(object):
 		intensity = np.sum(col_intensity - bg_intensity, axis=0)
 		return intensity
 
-	def create_mask(self, seg_intensity_threshold = 1000, smooth_width = 5, cutoff_factor = 0.5):
+	@property
+	def mask(self):
+		"""
+		Returns the mask for colony area for this segment.
+		"""
+		if not hasattr(self,"_mask"):
+			self.create_mask()
+		return self._mask
+
+	def create_mask(self, cutoff_factor = 0.5):
 		"""
 		Creates a mask for colony area in this segment.
 		"""
+		t = self.threshold_timepoint
 		self._mask = np.empty(self.resolution)
-		a = [np.sum(np.multiply(color_distance(self.images[t],self.background),self.speckle_mask))/(np.sum(self.speckle_mask)) for t in range(self.n_times)]
-		a = smoothen(a, smooth_width)
-		try:
-			t = list(a > seg_intensity_threshold).index(True)
-		except(ValueError):
-			t = -1
-			warn("Segment intensity threshold was not reached. Colony area mask was created from last picture in time lapse.")
 		self._mask = np.sum(self.images[t], axis=-1) > cutoff_factor * np.max(np.sum(self.images[t], axis=-1))
+
+	@property
+	def threshold_timepoint(self):
+		"""
+		Returns the timepoint when intensity thresholding should be done to determine colony area.
+
+		TODO: explain parameter
+		"""
+		if not hasattr(self,"_threshold_timepoint"):
+			self.create_threshold_timepoint()
+		return self._threshold_timepoint
+
+	def create_threshold_timepoint(self, seg_intensity_threshold = 1000, smooth_width = 5):
+		a = [np.mean(np.sum(self.images[t], axis=-1)[self.speckle_mask]) for t in range(self.n_times)]
+		a = smoothen(a, smooth_width)
+		print(a)
+		try:
+			self._threshold_timepoint = list(a > seg_intensity_threshold).index(True)
+		except(ValueError):
+			self._threshold_timepoint = -1
+			warn("Segment intensity threshold was not reached. Colony area mask was created from last picture in time lapse.")
+
 
 	@property
 	def background_mask(self):
@@ -71,15 +96,6 @@ class Colony(object):
 		TODO: explain parameter
 		"""
 		self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion)) + np.logical_not(self.speckle_mask)
-
-	@property
-	def mask(self):
-		"""
-		Returns the mask for colony area for this segment.
-		"""
-		if not hasattr(self,"_mask"):
-			self.create_mask()
-		return self._mask
 
 	def segment_intensity(self):
 		return np.array([np.sum(np.sum(np.multiply(np.sum(self.images[t],axis=-1),self.speckle_mask),axis=-1),axis=-1) for t in range(self.n_times)]/np.sum(self.speckle_mask))
