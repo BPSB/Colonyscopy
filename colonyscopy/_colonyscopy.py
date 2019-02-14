@@ -138,7 +138,7 @@ class Plate(object):
 		if bg is None:
 			self.background = np.average(images[0],axis=(0,1))
 		else:
-			self.background = np.asarray(bg,dtype=np.uint8)
+			self.background = np.asarray(bg)
 
 	@property
 	def temp_mean(self):
@@ -201,7 +201,7 @@ class Plate(object):
 		"""
 		Returns pixels in the background with a high gradient.
 		"""
-		return np.linalg.norm(np.gradient(self.background,axis=(0,1)),axis=(0,3)) > threshold
+		return np.linalg.norm(np.gradient(color_sum(self.background),axis=(0,1)),axis=0) > threshold
 
 	def _intensity_mask(self,factor):
 		"""
@@ -218,15 +218,15 @@ class Plate(object):
 		"""
 		matrix = np.zeros(self.resolution,dtype=bool)
 		matrix |= color_distance(self.images[0],self.background) > threshold
-		for t in range(self.n_times):
+		for t in range(self.n_times-1):
 			matrix |= color_distance(self.images[t+1],self.images[t]) > threshold
 		return matrix
 
 	def create_speckle_mask(self,
-				gradient_threshold = 3000,
-				intensity_factor = 4,
+				gradient_threshold = 1000,
+				intensity_factor = 3,
 				temporal_threshold = 1200,
-				expansion = 4,
+				expansion = 3,
 			):
 		"""
 		Tries to automatically detect speckles.
@@ -236,8 +236,8 @@ class Plate(object):
 		"""
 		self._speckle_mask = expand_mask(
 				  self._gradient_mask(gradient_threshold)
-				& self._intensity_mask(intensity_factor)
-				& self._temporal_mask(temporal_threshold),
+				| self._intensity_mask(intensity_factor)
+				| self._temporal_mask(temporal_threshold),
 				width = expansion
 			)
 
