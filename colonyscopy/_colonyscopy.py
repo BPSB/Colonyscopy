@@ -53,8 +53,10 @@ class Colony(object):
 		Creates a mask for colony area in this segment.
 		"""
 		t = self.threshold_timepoint
+		max = np.max(color_sum(self.images[t])[self.speckle_mask])
+		min = np.min(color_sum(self.images[t])[self.speckle_mask])
 		self._mask = np.empty(self.resolution)
-		self._mask = color_sum(self.images[t]) > cutoff_factor * np.max(color_sum(self.images[t]))
+		self._mask = np.multiply(color_sum(self.images[t]),self.speckle_mask) > cutoff_factor * (max+min)
 
 	@property
 	def threshold_timepoint(self):
@@ -67,10 +69,13 @@ class Colony(object):
 			self.create_threshold_timepoint()
 		return self._threshold_timepoint
 
-	def create_threshold_timepoint(self, seg_intensity_threshold = 1000, smooth_width = 5):
-		a = [np.mean(color_sum(self.images[t])[self.speckle_mask]) for t in range(self.n_times)]
+	def create_threshold_timepoint(self, seg_intensity_threshold = 1000, smooth_width = 10, growth_threshold = 600):
+		a = self.segment_intensity()
 		a = smoothen(a, smooth_width)
-		print(a)
+		try:
+			m = list(a > growth_threshold).index(True)
+		except(ValueError):
+			raise ColonyscopyFailedHeuristic("Growth threshold was not reached. Either growth threshold is chosen too high or there is no growth in this segment.")
 		try:
 			self._threshold_timepoint = list(a > seg_intensity_threshold).index(True)
 		except(ValueError):
@@ -95,17 +100,68 @@ class Colony(object):
 
 		TODO: explain parameter
 		"""
-		self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion)) + np.logical_not(self.speckle_mask)
+		self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion)) + self.speckle_mask
 
 	def segment_intensity(self):
-		return np.array([np.sum(np.sum(np.multiply(color_sum(self.images[t]),self.speckle_mask),axis=-1),axis=-1) for t in range(self.n_times)]/np.sum(self.speckle_mask))
+		seg_intensity = np.array([np.mean(color_sum(self.images[t])[self.speckle_mask]) for t in range(self.n_times)])
+		return seg_intensity - np.average(np.sort(seg_intensity)[:7])
 
-	def plot_segment_intensity(self,smooth_width = 5, seg_intensity_threshold = 1000):
+	def plot_segment_intensity(self,smooth_width = 10, seg_intensity_threshold = 1000):
 		plt.plot(self.segment_intensity(), label='Segment intensity')
 		plt.plot(smoothen(self.segment_intensity(), smooth_width), label='Smoothened segment intensity')
 		plt.plot(seg_intensity_threshold * np.ones(self.n_times), '--', label='Threshold')
 		plt.legend()
 		plt.show()
+
+	def display_growth_curve(self):  # New intensity measure
+	    N_t = self.n_times
+	    time = np.linspace(0,(N_t-1)*0.25,N_t)
+	    fit_interval_length = 0.9
+	    min_lower_bound = 2.0
+	    pl = np.empty((3,N_t))
+
+	    pl = self.colony_intensity()
+
+	    if np.min(pl) < 0:
+	        pl = pl+1.05*abs(np.min(pl))
+
+	    smooth_log = smoothen(np.log10(pl)[np.logical_not(np.isnan(np.log10(pl)))], 10)
+	    smooth_time = time[np.logical_not(np.isnan(np.log10(pl)))]
+	    n_nan = np.sum(np.isnan(np.log10(pl)))
+
+	    lower_bound = (np.max(smooth_log)+np.min(smooth_log)-fit_interval_length)/2
+
+	    if lower_bound < min_lower_bound:
+	        lower_bound = min_lower_bound
+
+	    upper_bound = lower_bound + fit_interval_length
+
+	    for k in range(len(smooth_log)):
+	        if smooth_log[k] > lower_bound:
+	            i_0 = k+n_nan
+	            break
+
+
+	    for k in range(len(smooth_log)):
+	        if smooth_log[k] > upper_bound:
+	            i_f = k+n_nan
+	            break
+
+	    a = np.polyfit(time[i_0:i_f], np.log10(pl[i_0:i_f]), 1)
+
+	    gen_time = np.log10(2)/a[0]
+
+	    print('Calculated generation time in hours is')
+	    print(gen_time)
+
+	    plt.figure(figsize=(12,8))
+	    plt.plot(time, np.log10(pl), '.', label='Measurement')
+	    plt.plot(time[i_0:i_f], np.log10(pl[i_0:i_f]), '.', label='Timepoints included in fit')
+	    plt.plot(time[i_0:i_f], a[0]*time[i_0:i_f] + a[1], label='Fit')
+	    plt.xlabel('Time [h]')
+	    plt.ylabel('Intensity')
+	    plt.legend()
+	    plt.show()
 
 
 class Plate(object):
@@ -197,13 +253,13 @@ class Plate(object):
 				for i in (0,1)
 			]
 
-	def _gradient_mask(self,threshold):
+	def _gradient_mask(self,threshold = 1000):
 		"""
 		Returns pixels in the background with a high gradient.
 		"""
 		return np.linalg.norm(np.gradient(color_sum(self.background),axis=(0,1)),axis=0) > threshold
 
-	def _intensity_mask(self,factor):
+	def _intensity_mask(self,factor = 4):
 		"""
 		Returns pixels of the background whose intensity is outside of `factor` times the standard deviation of all pixels.
 		"""
@@ -212,7 +268,7 @@ class Plate(object):
 
 		#TODO: include particularly dark pixels, work with percentiles.
 
-	def _temporal_mask(self,threshold):
+	def _temporal_mask(self,threshold = 1200):
 		"""
 		Returns pixels where the colour changes suddenly in time.
 		"""
@@ -224,7 +280,7 @@ class Plate(object):
 
 	def create_speckle_mask(self,
 				gradient_threshold = 1000,
-				intensity_factor = 3,
+				intensity_factor = 4,
 				temporal_threshold = 1200,
 				expansion = 3,
 			):
@@ -234,12 +290,12 @@ class Plate(object):
 		TODO:
 		explain parameters
 		"""
-		self._speckle_mask = expand_mask(
+		self._speckle_mask = np.logical_not(expand_mask(
 				  self._gradient_mask(gradient_threshold)
 				| self._intensity_mask(intensity_factor)
 				| self._temporal_mask(temporal_threshold),
 				width = expansion
-			)
+			))
 
 	@property
 	def speckle_mask(self):
@@ -251,9 +307,9 @@ class Plate(object):
 		x = self.borders[0]
 		y = self.borders[1]
 		self._colonies = np.array(
-				[Colony(self.images[:,x[i]:x[i+1],y[j]:y[j+1],:],
+				[[Colony(self.images[:,x[i]:x[i+1],y[j]:y[j+1],:],
 						self.background[x[i]:x[i+1],y[j]:y[j+1],:],
-						self.speckle_mask[x[i]:x[i+1],y[j]:y[j+1]]) for i in range(self.layout[0])
+						self.speckle_mask[x[i]:x[i+1],y[j]:y[j+1]]) for i in range(self.layout[0])]
 				for j in range(self.layout[1])]
 			, dtype=object)
 

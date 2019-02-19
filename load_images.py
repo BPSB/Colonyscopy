@@ -3,7 +3,7 @@ import rawpy
 import imageio
 import numpy as np
 from matplotlib import pyplot as plt
-from colonyscopy.tools import smoothen, color_distance, expand_mask
+from colonyscopy.tools import smoothen, color_distance, expand_mask, color_sum
 from colonyscopy import Colony, Plate, ColonyscopyFailedHeuristic
 import os
 
