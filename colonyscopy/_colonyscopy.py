@@ -75,7 +75,8 @@ class Colony(object):
 		try:
 			m = list(a > growth_threshold).index(True)
 		except(ValueError):
-			raise ColonyscopyFailedHeuristic("Growth threshold was not reached. Either growth threshold is chosen too high or there is no growth in this segment.")
+			self._threshold_timepoint = -1
+			warn("Growth threshold was not reached. Either growth threshold is chosen too high or there is no growth in this segment.")
 		try:
 			self._threshold_timepoint = list(a > seg_intensity_threshold).index(True)
 		except(ValueError):
@@ -100,7 +101,7 @@ class Colony(object):
 
 		TODO: explain parameter
 		"""
-		self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion)) + self.speckle_mask
+		self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion) + np.logical_not(self.speckle_mask))
 
 	def segment_intensity(self):
 		seg_intensity = np.array([np.mean(color_sum(self.images[t])[self.speckle_mask]) for t in range(self.n_times)])
@@ -113,11 +114,9 @@ class Colony(object):
 		plt.legend()
 		plt.show()
 
-	def display_growth_curve(self):  # New intensity measure
+	def generation_time(self, fit_interval_length = 0.7, min_lower_bound = 1.8, smooth_width = 7):  # New intensity measure
 	    N_t = self.n_times
 	    time = np.linspace(0,(N_t-1)*0.25,N_t)
-	    fit_interval_length = 0.9
-	    min_lower_bound = 2.0
 	    pl = np.empty((3,N_t))
 
 	    pl = self.colony_intensity()
@@ -125,15 +124,14 @@ class Colony(object):
 	    if np.min(pl) < 0:
 	        pl = pl+1.05*abs(np.min(pl))
 
-	    smooth_log = smoothen(np.log10(pl)[np.logical_not(np.isnan(np.log10(pl)))], 10)
+	    smooth_log = smoothen(np.log10(pl)[np.logical_not(np.isnan(np.log10(pl)))], smooth_width)
 	    smooth_time = time[np.logical_not(np.isnan(np.log10(pl)))]
 	    n_nan = np.sum(np.isnan(np.log10(pl)))
-
-	    lower_bound = (np.max(smooth_log)+np.min(smooth_log)-fit_interval_length)/2
+# Changed minimum to min of pl instead of min of smooth log because of smoothing function
+	    lower_bound = (np.max(smooth_log)+np.min(np.log10(pl))-fit_interval_length)/2
 
 	    if lower_bound < min_lower_bound:
 	        lower_bound = min_lower_bound
-
 	    upper_bound = lower_bound + fit_interval_length
 
 	    for k in range(len(smooth_log)):
@@ -141,6 +139,45 @@ class Colony(object):
 	            i_0 = k+n_nan
 	            break
 
+	    for k in range(len(smooth_log)):
+	        if smooth_log[k] > upper_bound:
+	            i_f = k+n_nan
+	            break
+
+	    a = np.polyfit(time[i_0:i_f], np.log10(pl[i_0:i_f]), 1)
+
+	    gen_time = np.log10(2)/a[0]
+	    return gen_time
+
+	def display_growth_curve(self, fit_interval_length = 0.7, min_lower_bound = 1.8, smooth_width = 7):  # New intensity measure
+	    N_t = self.n_times
+	    time = np.linspace(0,(N_t-1)*0.25,N_t)
+	    pl = np.empty((3,N_t))
+
+	    pl = self.colony_intensity()
+
+	    if np.min(pl) < 0:
+	        pl = pl+1.05*abs(np.min(pl))
+
+	    smooth_log = smoothen(np.log10(pl)[np.logical_not(np.isnan(np.log10(pl)))], smooth_width)
+	    smooth_time = time[np.logical_not(np.isnan(np.log10(pl)))]
+	    n_nan = np.sum(np.isnan(np.log10(pl)))
+# Changed minimum to min of pl instead of min of smooth log because of smoothing function
+	    lower_bound = (np.max(smooth_log)+np.min(np.log10(pl))-fit_interval_length)/2
+
+	    if lower_bound < min_lower_bound:
+	        lower_bound = min_lower_bound
+
+	    upper_bound = lower_bound + fit_interval_length
+	    print('Lower bound is')
+	    print(lower_bound)
+	    print('Upper bound is')
+	    print(upper_bound)
+
+	    for k in range(len(smooth_log)):
+	        if smooth_log[k] > lower_bound:
+	            i_0 = k+n_nan
+	            break
 
 	    for k in range(len(smooth_log)):
 	        if smooth_log[k] > upper_bound:
@@ -155,6 +192,7 @@ class Colony(object):
 	    print(gen_time)
 
 	    plt.figure(figsize=(12,8))
+	    plt.plot(time, smooth_log, label='Smoothened curve')
 	    plt.plot(time, np.log10(pl), '.', label='Measurement')
 	    plt.plot(time[i_0:i_f], np.log10(pl[i_0:i_f]), '.', label='Timepoints included in fit')
 	    plt.plot(time[i_0:i_f], a[0]*time[i_0:i_f] + a[1], label='Fit')
