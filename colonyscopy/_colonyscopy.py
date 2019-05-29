@@ -104,7 +104,7 @@ class Colony(object):
 			self.create_background_mask()
 		return self._background_mask
 
-	def create_background_mask(self, expansion = 5):
+	def create_background_mask(self, expansion = 7):
 		"""
 		Creates a mask that only includes background pixels of this segment.
 
