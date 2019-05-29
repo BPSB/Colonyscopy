@@ -20,10 +20,11 @@ class Colony(object):
 			A three-dimensional array containing the background, i.e., what to expect in the absence of a colony. The first two dimensions are spacial; the last dimension has length 3 and is colour.
 	"""
 
-	def __init__(self,images,background,speckle_mask):
+	def __init__(self,images,background,speckle_mask,centre):
 		self.images = images
 		self.background = background
 		self.speckle_mask = speckle_mask
+		self.centre = centre
 		self.resolution = images.shape[1:3]
 		self.n_colours = images.shape[3]
 		self.n_times = images.shape[0]
@@ -34,8 +35,8 @@ class Colony(object):
 		intensity = np.empty((self.n_times,self.n_colours))
 		for t in range(self.n_times):
 			for m in range(self.n_colours):
-				bg_intensity[t,m] = np.mean(self.images[t,:,:,m][self.background_mask])
 				col_intensity[t,m] = np.mean(self.images[t,:,:,m][self.mask])
+				bg_intensity[t,m] = np.mean(self.images[t,:,:,m][self.background_mask])
 		intensity = color_sum((col_intensity - bg_intensity))
 		return intensity
 
@@ -53,10 +54,18 @@ class Colony(object):
 		Creates a mask for colony area in this segment.
 		"""
 		t = self.threshold_timepoint
-		max = np.max(color_sum(self.images[t])[self.speckle_mask])
-		min = np.min(color_sum(self.images[t])[self.speckle_mask])
-		self._mask = np.empty(self.resolution)
-		self._mask = np.multiply(color_sum(self.images[t]),self.speckle_mask) > cutoff_factor * (max+min)
+		if t == None:
+			warn("Growth threshold was not reached. Mask created from circle around segment center.")
+			self._mask = np.zeros(np.shape(self.images[0,:,:,0]))
+			self._mask[tuple(self.centre)] = 1
+			self._mask = expand_mask(self._mask, 8)
+		else:
+			max = np.max(color_sum(self.images[t])[self.speckle_mask])
+			min = np.min(color_sum(self.images[t])[self.speckle_mask])
+			self._mask = np.empty(self.resolution)
+			self._mask = np.multiply(color_sum(self.images[t]),self.speckle_mask) > cutoff_factor * (max+min)
+			if t == -1:
+				warn("Segment intensity threshold was not reached. Colony area mask was created from last picture in time lapse.")
 
 	@property
 	def threshold_timepoint(self):
@@ -73,15 +82,15 @@ class Colony(object):
 		a = self.segment_intensity()
 		a = smoothen(a, smooth_width)
 		try:
-			m = list(a > growth_threshold).index(True)
-		except(ValueError):
-			self._threshold_timepoint = -1
-			warn("Growth threshold was not reached. Either growth threshold is chosen too high or there is no growth in this segment.")
-		try:
 			self._threshold_timepoint = list(a > seg_intensity_threshold).index(True)
 		except(ValueError):
 			self._threshold_timepoint = -1
-			warn("Segment intensity threshold was not reached. Colony area mask was created from last picture in time lapse.")
+			warn("Segment intensity threshold was not reached. Colony area mask will be created from last picture in time lapse.")
+		try:
+			m = list(a > growth_threshold).index(True)
+		except(ValueError):
+			self._threshold_timepoint = None
+			warn("Growth threshold was not reached. Either growth threshold is chosen too high or there is no growth in this segment.")
 
 
 	@property
@@ -95,13 +104,16 @@ class Colony(object):
 			self.create_background_mask()
 		return self._background_mask
 
-	def create_background_mask(self, expansion = 4):
+	def create_background_mask(self, expansion = 5):
 		"""
 		Creates a mask that only includes background pixels of this segment.
 
 		TODO: explain parameter
 		"""
-		self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion) + np.logical_not(self.speckle_mask))
+		if self._threshold_timepoint == None:
+			self._background_mask = np.logical_not(expand_mask(self.mask, width = 2*expansion) + np.logical_not(self.speckle_mask))
+		else:
+			self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion) + np.logical_not(self.speckle_mask))
 
 	def segment_intensity(self):
 		seg_intensity = np.array([np.mean(color_sum(self.images[t])[self.speckle_mask]) for t in range(self.n_times)])
@@ -149,21 +161,87 @@ class Colony(object):
 	    gen_time = np.log10(2)/a[0]
 	    return gen_time
 
+	def test_growth_curve_computation(self, fit_interval_length = 0.7, min_lower_bound = 1.8, smooth_width = 7):
+	    N_t = self.n_times
+	    time = np.linspace(0,(N_t-1)*0.25,N_t)
+	    pl = np.copy(self.colony_intensity())
+
+	    array_mask = pl > 0
+	    pl = pl[array_mask]
+	    time = time[array_mask]
+
+	    smooth_log = smoothen(np.log10(pl), smooth_width)
+	    smooth_time = time
+# 		Changed minimum to mean of 3 smallest values of pl, bc smoothed function weird and min(pl) random
+	    lower_bound = (np.max(smooth_log)+np.mean(np.sort(np.log10(pl))[:3])-fit_interval_length)/2
+
+	    if lower_bound < min_lower_bound:
+	        lower_bound = min_lower_bound
+
+	    upper_bound = lower_bound + fit_interval_length
+
+	    for k in range(len(smooth_log)):
+	        if smooth_log[k] > lower_bound:
+	            i_0 = k
+	            break
+
+	    for k in range(len(smooth_log)):
+	        if smooth_log[k] > upper_bound:
+	            i_f = k
+	            break
+
+	    if all(smooth_log < upper_bound):
+	        i_f = len(smooth_log)-1
+
+	    a = np.polyfit(time[i_0:i_f], np.log10(pl[i_0:i_f]), 1)
+
+	    gen_time = np.log10(2)/a[0]
+
+	    print('Calculated generation time in hours is')
+	    print(gen_time)
+
+	    plt.figure(figsize=(12,8))
+	    plt.semilogy(time, pl, '.', label='Measurement')
+	    plt.semilogy(time[i_0:i_f], pl[i_0:i_f], '.', label='Timepoints included in fit')
+	    plt.semilogy(time[i_0:i_f], 10**(a[0]*time[i_0:i_f] + a[1]), label='Fit')
+	    plt.xlabel('Time [h]')
+	    plt.ylabel('Intensity')
+	    plt.legend()
+	    plt.show()
+
+	    plt.imshow(self.speckle_mask, cmap='gray')
+	    plt.title('Speckle mask')
+	    plt.show()
+
+	    plt.imshow(self.background_mask, cmap='gray')
+	    plt.title('Background mask')
+	    plt.show()
+
+
+	    plt.imshow(self.mask, cmap='gray')
+	    plt.title('Colony area mask')
+	    plt.show()
+
+	    for image in color_sum(self.images)[::10,:,:]:
+		    plt.imshow(image, cmap='gray')
+		    plt.show()
+
 	def display_growth_curve(self, fit_interval_length = 0.7, min_lower_bound = 1.8, smooth_width = 7):  # New intensity measure
 	    N_t = self.n_times
 	    time = np.linspace(0,(N_t-1)*0.25,N_t)
-	    pl = np.empty((3,N_t))
 
-	    pl = self.colony_intensity()
+	    pl = np.copy(self.colony_intensity())
 
-	    if np.min(pl) < 0:
-	        pl = pl+1.05*abs(np.min(pl))
+	    array_mask = pl > 0
+	    pl = pl[array_mask]
+	    time = time[array_mask]
 
-	    smooth_log = smoothen(np.log10(pl)[np.logical_not(np.isnan(np.log10(pl)))], smooth_width)
-	    smooth_time = time[np.logical_not(np.isnan(np.log10(pl)))]
-	    n_nan = np.sum(np.isnan(np.log10(pl)))
+
+
+	    smooth_log = smoothen(np.log10(pl), smooth_width)
+	    smooth_time = time
 # Changed minimum to min of pl instead of min of smooth log because of smoothing function
-	    lower_bound = (np.max(smooth_log)+np.min(np.log10(pl))-fit_interval_length)/2
+	    lower_bound = (np.max(smooth_log)+np.mean(np.sort(np.log10(pl))[:3])-fit_interval_length)/2
 
 	    if lower_bound < min_lower_bound:
 	        lower_bound = min_lower_bound
@@ -176,13 +254,16 @@ class Colony(object):
 
 	    for k in range(len(smooth_log)):
 	        if smooth_log[k] > lower_bound:
-	            i_0 = k+n_nan
+	            i_0 = k
 	            break
 
 	    for k in range(len(smooth_log)):
 	        if smooth_log[k] > upper_bound:
-	            i_f = k+n_nan
+	            i_f = k
 	            break
+
+	    if all(smooth_log < upper_bound):
+	        i_f = len(smooth_log)-1
 
 	    a = np.polyfit(time[i_0:i_f], np.log10(pl[i_0:i_f]), 1)
 
@@ -192,15 +273,41 @@ class Colony(object):
 	    print(gen_time)
 
 	    plt.figure(figsize=(12,8))
-	    plt.plot(time, smooth_log, label='Smoothened curve')
-	    plt.plot(time, np.log10(pl), '.', label='Measurement')
-	    plt.plot(time[i_0:i_f], np.log10(pl[i_0:i_f]), '.', label='Timepoints included in fit')
-	    plt.plot(time[i_0:i_f], a[0]*time[i_0:i_f] + a[1], label='Fit')
+	    plt.semilogy(time, 10**(smooth_log), label='Smoothened curve')
+	    plt.semilogy(time, pl, '.', label='Measurement')
+	    plt.semilogy(time[i_0:i_f], pl[i_0:i_f], '.', label='Timepoints included in fit')
+	    plt.semilogy(time[i_0:i_f], 10**(a[0]*time[i_0:i_f] + a[1]), label='Fit')
+	    #plt.semilogy(time, pl, '.') # Just for now, for showing Andreas some data
 	    plt.xlabel('Time [h]')
 	    plt.ylabel('Intensity')
 	    plt.legend()
 	    plt.show()
 
+	def _gradient_mask(self,threshold = 1000):
+		"""
+		Returns pixels in the background with a high gradient.
+		"""
+		return np.linalg.norm(np.gradient(color_sum(self.background),axis=(0,1)),axis=0) > threshold
+
+	def _intensity_mask(self,factor = 4, threshold = None):
+		"""
+		Returns pixels of the background whose intensity is outside of `factor` times the standard deviation of all pixels.
+		"""
+		background_intensity = color_sum(self.background)
+		if threshold == None:
+		    return background_intensity > np.mean(background_intensity)+factor*np.std(background_intensity)
+		else:
+			return background_intensity > threshold
+
+	def _temporal_mask(self,threshold = 1200):
+		"""
+		Returns pixels where the colour changes suddenly in time.
+		"""
+		matrix = np.zeros(self.resolution,dtype=bool)
+		matrix |= color_distance(self.images[0],self.background) > threshold
+		for t in range(self.n_times-1):
+			matrix |= color_distance(self.images[t+1],self.images[t]) > threshold
+		return matrix
 
 class Plate(object):
 	"""
@@ -261,6 +368,18 @@ class Plate(object):
 		else:
 			# no good smooth width at all:
 			raise ColonyscopyFailedHeuristic("Could not detect colony coordinates. Check if layout in right order.")
+
+	@property
+	def colony_centres(self):
+		'''
+		Returns a matrix of centre coordinates inside the colony segment.
+		'''
+		colony_centres = np.zeros((self.layout[0],self.layout[1],2), dtype=np.uint8)
+		for i in range(self.layout[0]):
+			for j in range(self.layout[1]):
+				colony_centres[i][j][0] = int(self.centres[i][j][0] - self.borders[0][i])
+				colony_centres[i][j][1] = int(self.centres[i][j][1] - self.borders[1][j])
+		return colony_centres
 
 	@property
 	def coordinates(self):
@@ -347,7 +466,8 @@ class Plate(object):
 		self._colonies = np.array(
 				[[Colony(self.images[:,x[i]:x[i+1],y[j]:y[j+1],:],
 						self.background[x[i]:x[i+1],y[j]:y[j+1],:],
-						self.speckle_mask[x[i]:x[i+1],y[j]:y[j+1]]) for i in range(self.layout[0])]
+						self.speckle_mask[x[i]:x[i+1],y[j]:y[j+1]],
+						self.colony_centres[i][j]) for i in range(self.layout[0])]
 				for j in range(self.layout[1])]
 			, dtype=object)
 
