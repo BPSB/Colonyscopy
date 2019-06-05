@@ -74,6 +74,9 @@ class Colony(object):
 		Creates a mask for colony area in this segment.
 		"""
 		t = self.threshold_timepoint
+		(n_x, n_y) = self.resolution
+		inner_square = np.zeros((n_x,n_y), dtype=bool)
+		inner_square[int(n_x/4):int((3*n_x)/4)+1,int(n_y/4):int((3*n_y)/4)+1] = True
 		if t == None:
 			warn("Growth threshold was not reached. Mask created from circle around segment center.")
 			self._mask = np.zeros(np.shape(self.images[0,:,:,0]))
@@ -86,6 +89,10 @@ class Colony(object):
 			self._mask = np.multiply(color_sum(self.images[t]),self.speckle_mask) > cutoff_factor * (max+min)
 			if t == -1:
 				warn("Segment intensity threshold was not reached. Colony area mask was created from last picture in time lapse.")
+		if np.sum(self._mask) < 120:
+			warn("Colony area mask too sparse to give reliable results.")
+		elif (np.sum(np.multiply(inner_square,mask))/np.sum(mask)) < 0.75:
+			warn("Significant part of colony area mask outside of inner par of the segment. Contamination is likely.")
 
 	@property
 	def threshold_timepoint(self):
