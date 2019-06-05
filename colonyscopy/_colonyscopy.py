@@ -36,8 +36,28 @@ class Colony(object):
 		for t in range(self.n_times):
 			for m in range(self.n_colours):
 				col_intensity[t,m] = np.mean(self.images[t,:,:,m][self.mask])
-				bg_intensity[t,m] = np.mean(self.images[t,:,:,m][self.background_mask])
+				bg_intensity[t,m] = np.median(self.images[t,:,:,m][self.background_mask])
 		intensity = color_sum((col_intensity - bg_intensity))
+
+		if np.mean(intensity[:6]) < 0:
+			if np.mean(intensity[:6]) < 0:
+				factor = 1.5
+			else:
+				factor = 1.8
+			background_px = color_sum(self.images[0])[self.background_mask]
+			bright_px = np.multiply(color_sum(self.images[5]), self.background_mask) > np.mean(background_px)+factor*np.std(background_px)
+			bright_px = expand_mask(bright_px, width=3)
+			self._background_mask = np.logical_not(np.logical_not(self.background_mask)+bright_px)
+
+			bg_intensity = np.empty((self.n_times,self.n_colours))
+			col_intensity = np.empty((self.n_times,self.n_colours))
+			intensity = np.empty((self.n_times,self.n_colours))
+			for t in range(self.n_times):
+				for m in range(self.n_colours):
+					col_intensity[t,m] = np.mean(self.images[t,:,:,m][self.mask])
+					bg_intensity[t,m] = np.median(self.images[t,:,:,m][self.background_mask])
+			intensity = color_sum((col_intensity - bg_intensity))
+
 		return intensity
 
 	@property
@@ -58,7 +78,7 @@ class Colony(object):
 			warn("Growth threshold was not reached. Mask created from circle around segment center.")
 			self._mask = np.zeros(np.shape(self.images[0,:,:,0]))
 			self._mask[tuple(self.centre)] = 1
-			self._mask = expand_mask(self._mask, 8)
+			self._mask = np.multiply(expand_mask(self._mask, 9),self.speckle_mask)
 		else:
 			max = np.max(color_sum(self.images[t])[self.speckle_mask])
 			min = np.min(color_sum(self.images[t])[self.speckle_mask])
@@ -104,14 +124,14 @@ class Colony(object):
 			self.create_background_mask()
 		return self._background_mask
 
-	def create_background_mask(self, expansion = 7):
+	def create_background_mask(self, expansion = 6):
 		"""
 		Creates a mask that only includes background pixels of this segment.
 
 		TODO: explain parameter
 		"""
 		if self._threshold_timepoint == None:
-			self._background_mask = np.logical_not(expand_mask(self.mask, width = 2*expansion) + np.logical_not(self.speckle_mask))
+			self._background_mask = np.logical_not(expand_mask(self.mask, width = int(1.6*expansion)) + np.logical_not(self.speckle_mask))
 		else:
 			self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion) + np.logical_not(self.speckle_mask))
 
