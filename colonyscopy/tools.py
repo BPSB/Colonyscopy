@@ -70,3 +70,9 @@ def radial_profile(data,centre,nbins=100,r_max=None):
 	values = np.bincount( bins, data.ravel() )
 	normalisation = np.bincount(bins)
 	return bin_centres,values/normalisation
+
+def circle_mask(resolution, centre, width):
+    circle_mask = np.zeros(resolution, dtype=bool)
+    circle_mask[tuple(centre)] = True
+    circle_mask = expand_mask(circle_mask, width)
+    return circle_mask
