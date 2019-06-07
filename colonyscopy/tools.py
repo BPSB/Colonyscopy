@@ -62,11 +62,21 @@ def show_image(array,mode="RGB"):
 		if proc.name() == "display":
 			proc.kill()
 
-def radial_profile(data,centre,nbins=100,r_max=None):
+def gaussian_profile(abscissae,position,width):
+	profile = np.exp(-((abscissae-position)/width)**2/2)
+	return profile/sum(profile)
+
+def radial_profile(data,centre,smooth_width=2,npoints=100):
 	radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
-	r_max = r_max or np.max(radii)*(nbins+0.5)/nbins
-	bin_centres = np.linspace(0,r_max,2*nbins+1)[1::2]
-	bins = (radii*(nbins/r_max)).ravel().astype(int)
-	values = np.bincount( bins, data.ravel() )
-	normalisation = np.bincount(bins)
-	return bin_centres,values/normalisation
+	r_max = np.max(radii)
+	abscissae = np.linspace(0,r_max,npoints)
+	sums = np.zeros_like(abscissae)
+	normalisation = np.zeros_like(abscissae)
+	for i,radii_line in enumerate(radii):
+		for j,radius in enumerate(radii_line):
+			profile = gaussian_profile(abscissae,radius,smooth_width)
+			normalisation += profile
+			sums += profile*data[i,j]
+	return abscissae,sums/normalisation
+
+

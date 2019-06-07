@@ -10,7 +10,7 @@ distances = np.hypot(x,y)
 
 class TestRadialProfile(object):
 	def test_linear_profile(self):
-		bins,values = radial_profile(distances,centre=centre)
+		bins,values = radial_profile(distances,centre=centre,smooth_width=0.5)
 		assert np.sum((values-bins)**2) < 2.0
 	
 	def test_gaußian_profile(self):
