@@ -66,7 +66,7 @@ def gaussian_profile(abscissae,position,width):
 	profile = np.exp(-((abscissae-position)/width)**2/2)
 	return profile/sum(profile)
 
-def radial_profile(data,centre,smooth_width=2,npoints=100):
+def radial_profile(data,centre,smooth_width=0.5,npoints=100):
 	radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
 	r_max = np.max(radii)
 	abscissae = np.linspace(0,r_max,npoints)
@@ -79,4 +79,14 @@ def radial_profile(data,centre,smooth_width=2,npoints=100):
 			sums += profile*data[i,j]
 	return abscissae,sums/normalisation
 
-
+def excentricity(data,centre,smooth_width=0.5,npoints=100):
+	abscissae,values = radial_profile(data,centre,smooth_width=2,npoints=100)
+	radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
+	
+	sumsq = 0
+	for i,line in enumerate(data):
+		for j,intensity in enumerate(line):
+			expected_intensity = np.interp(radii[i,j],abscissae,values)
+			sumsq += (intensity - expected_intensity)**2
+	
+	return np.sqrt(sumsq)/data.size
