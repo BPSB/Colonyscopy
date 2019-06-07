@@ -70,26 +70,21 @@ class Colony(object):
 			self.create_mask()
 		return self._mask
 
-	def create_mask(self, cutoff_factor = 0.5):
+	def create_mask(self, cutoff_factor = 0.5, inner_circle_width = 14, colony_mask_width = 10):
 		"""
 		Creates a mask for colony area in this segment.
 		"""
 		t = self.threshold_timepoint
-        (n_x, n_y) = self.resolution
-        inner_circle = np.zeros((n_x,n_y), dtype=bool)
-        inner_circle[tuple(self.centre)] = True
-        inner_circle = expand_mask(inner_circle, 14)
+        inner_circle = circle_mask(self.resolution, self.centre, inner_circle_width)
 		if t is None:
 			warn("Growth threshold was not reached. Mask created from circle around segment center.")
-			self._mask = np.zeros(self.resolution, dtype=bool)
-			self._mask[tuple(self.centre)] = True
-			self._mask = expand_mask(self._mask, 10) & self.speckle_mask
+			self._mask = circle_mask(self.resolution, self.centre, colony_mask_width) & self.speckle_mask
 		else:
 			max = np.max(color_sum(self.images[t])[self.speckle_mask])
 			min = np.min(color_sum(self.images[t])[self.speckle_mask])
 			self._mask = np.empty(self.resolution, dtype=bool)
 			self._mask = np.multiply(color_sum(self.images[t]),self.speckle_mask) > cutoff_factor * (max+min)
-			if t == -1:
+			if t == self.n_times-1:
 				warn("Segment intensity threshold was not reached. Colony area mask was created from last picture in time lapse.")
 		if np.sum(self._mask) < 120:
 			warn("Colony area mask too sparse to give reliable results.")
