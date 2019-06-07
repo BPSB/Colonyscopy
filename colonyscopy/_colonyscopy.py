@@ -29,35 +29,36 @@ class Colony(object):
 		self.n_colours = images.shape[3]
 		self.n_times = images.shape[0]
 
+	@property
+	def temp_mean(self):
+		if not hasattr(self,"_temp_mean"):
+			self._temp_mean = np.average(self.images,axis=0)
+		return self._temp_mean
+
 	def colony_intensity(self):
-		bg_intensity = np.empty((self.n_times,self.n_colours))
-		col_intensity = np.empty((self.n_times,self.n_colours))
-		intensity = np.empty((self.n_times,self.n_colours))
+		bg_intensity = np.empty(self.n_times)
+		col_intensity = np.empty(self.n_times)
+		# Loop is necessary due to mask destroying structure
 		for t in range(self.n_times):
-			for m in range(self.n_colours):
-				col_intensity[t,m] = np.mean(self.images[t,:,:,m][self.mask])
-				bg_intensity[t,m] = np.median(self.images[t,:,:,m][self.background_mask])
-		intensity = color_sum((col_intensity - bg_intensity))
-
-		if np.mean(intensity[:6]) < 0:
-			if np.mean(intensity[:6]) < 0:
-				factor = 1.5
-			else:
-				factor = 1.8
+			col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
+			bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
+		intensity = (col_intensity - bg_intensity)
+		if (np.mean(intensity[:6]) < 0):
+			factor = 1.5 if (np.mean(intensity[:6]) < -20) else 1.8
 			background_px = color_sum(self.images[0])[self.background_mask]
-			bright_px = np.multiply(color_sum(self.images[5]), self.background_mask) > np.mean(background_px)+factor*np.std(background_px)
+			bright_px = np.multiply(color_sum(self.images[0]), self.background_mask) > np.mean(background_px)+factor*np.std(background_px)
 			bright_px = expand_mask(bright_px, width=3)
-			self._background_mask = np.logical_not(np.logical_not(self.background_mask)+bright_px)
-
-			bg_intensity = np.empty((self.n_times,self.n_colours))
-			col_intensity = np.empty((self.n_times,self.n_colours))
-			intensity = np.empty((self.n_times,self.n_colours))
-			for t in range(self.n_times):
-				for m in range(self.n_colours):
-					col_intensity[t,m] = np.mean(self.images[t,:,:,m][self.mask])
-					bg_intensity[t,m] = np.median(self.images[t,:,:,m][self.background_mask])
-			intensity = color_sum((col_intensity - bg_intensity))
-
+			self._background_mask &= np.logical_not(bright_px)
+			try:
+				intensity = self.colony_intensity()
+			except(RecursionError):
+				bg_intensity = np.empty(self.n_times)
+				col_intensity = np.empty(self.n_times)
+				# Loop is necessary due to mask destroying structure
+				for t in range(self.n_times):
+					col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
+					bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
+				intensity = (col_intensity - bg_intensity)
 		return intensity
 
 	@property
@@ -74,25 +75,26 @@ class Colony(object):
 		Creates a mask for colony area in this segment.
 		"""
 		t = self.threshold_timepoint
-		(n_x, n_y) = self.resolution
-		inner_square = np.zeros((n_x,n_y), dtype=bool)
-		inner_square[int(n_x/4):int((3*n_x)/4)+1,int(n_y/4):int((3*n_y)/4)+1] = True
-		if t == None:
+        (n_x, n_y) = self.resolution
+        inner_circle = np.zeros((n_x,n_y), dtype=bool)
+        inner_circle[tuple(self.centre)] = True
+        inner_circle = expand_mask(inner_circle, 14)
+		if t is None:
 			warn("Growth threshold was not reached. Mask created from circle around segment center.")
-			self._mask = np.zeros(np.shape(self.images[0,:,:,0]))
-			self._mask[tuple(self.centre)] = 1
-			self._mask = np.multiply(expand_mask(self._mask, 9),self.speckle_mask)
+			self._mask = np.zeros(self.resolution, dtype=bool)
+			self._mask[tuple(self.centre)] = True
+			self._mask = expand_mask(self._mask, 10) & self.speckle_mask
 		else:
 			max = np.max(color_sum(self.images[t])[self.speckle_mask])
 			min = np.min(color_sum(self.images[t])[self.speckle_mask])
-			self._mask = np.empty(self.resolution)
+			self._mask = np.empty(self.resolution, dtype=bool)
 			self._mask = np.multiply(color_sum(self.images[t]),self.speckle_mask) > cutoff_factor * (max+min)
 			if t == -1:
 				warn("Segment intensity threshold was not reached. Colony area mask was created from last picture in time lapse.")
 		if np.sum(self._mask) < 120:
 			warn("Colony area mask too sparse to give reliable results.")
-		elif (np.sum(np.multiply(inner_square,mask))/np.sum(mask)) < 0.75:
-			warn("Significant part of colony area mask outside of inner par of the segment. Contamination is likely.")
+		if np.sum(np.multiply(self._mask, np.logical_not(inner_circle)))/np.sum(self._mask) > 0.12:
+			warn("Significant part of colony area mask outside of inner part of the segment. Contamination is likely.")
 
 	@property
 	def threshold_timepoint(self):
@@ -108,17 +110,16 @@ class Colony(object):
 	def create_threshold_timepoint(self, seg_intensity_threshold = 1000, smooth_width = 10, growth_threshold = 600):
 		a = self.segment_intensity()
 		a = smoothen(a, smooth_width)
+		#self._threshold_timepoint = None
+		#"""
 		try:
-			self._threshold_timepoint = list(a > seg_intensity_threshold).index(True)
-		except(ValueError):
-			self._threshold_timepoint = -1
+			self._threshold_timepoint = np.where(a > seg_intensity_threshold)[0][0]
+		except(IndexError):
+			self._threshold_timepoint = self.n_times-1
 			warn("Segment intensity threshold was not reached. Colony area mask will be created from last picture in time lapse.")
-		try:
-			m = list(a > growth_threshold).index(True)
-		except(ValueError):
-			self._threshold_timepoint = None
-			warn("Growth threshold was not reached. Either growth threshold is chosen too high or there is no growth in this segment.")
-
+			if not np.any(a > growth_threshold):
+				self._threshold_timepoint = None
+		#"""
 
 	@property
 	def background_mask(self):
@@ -131,13 +132,19 @@ class Colony(object):
 			self.create_background_mask()
 		return self._background_mask
 
+	@background_mask.setter
+	def background_mask(self,value):
+		if (np.shape(value) == self.resolution) & (value.dtype == bool): #Check if value boolean
+			self._background_mask = value
+
+
 	def create_background_mask(self, expansion = 6):
 		"""
 		Creates a mask that only includes background pixels of this segment.
 
 		TODO: explain parameter
 		"""
-		if self._threshold_timepoint == None:
+		if self.threshold_timepoint is None:
 			self._background_mask = np.logical_not(expand_mask(self.mask, width = int(1.6*expansion)) + np.logical_not(self.speckle_mask))
 		else:
 			self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion) + np.logical_not(self.speckle_mask))
@@ -224,13 +231,14 @@ class Colony(object):
 
 	    gen_time = np.log10(2)/a[0]
 
-	    print('Calculated generation time in hours is')
-	    print(gen_time)
+	    print(f"Calculated generation time is {gen_time} hours.")
+	    print(f"Starting point of fit is at {time[i_0]} hours.")
 
 	    plt.figure(figsize=(12,8))
 	    plt.semilogy(time, pl, '.', label='Measurement')
 	    plt.semilogy(time[i_0:i_f], pl[i_0:i_f], '.', label='Timepoints included in fit')
 	    plt.semilogy(time[i_0:i_f], 10**(a[0]*time[i_0:i_f] + a[1]), label='Fit')
+	    plt.ylim(bottom=5)
 	    plt.xlabel('Time [h]')
 	    plt.ylabel('Intensity')
 	    plt.legend()
@@ -249,9 +257,23 @@ class Colony(object):
 	    plt.title('Colony area mask')
 	    plt.show()
 
+	    k=0
 	    for image in color_sum(self.images)[::10,:,:]:
+		    print(f"Time {time[k]} hours.")
+		    k += 10
 		    plt.imshow(image, cmap='gray')
 		    plt.show()
+
+	    plt.imshow(color_sum(self.temp_mean))
+	    plt.colorbar()
+	    plt.show()
+
+	    plt.imshow(np.multiply(color_sum(self.temp_mean), self.mask))
+	    plt.clim(np.min(color_sum(self.temp_mean)[self.mask]),np.max(color_sum(self.temp_mean)[self.mask]))
+	    plt.colorbar()
+	    plt.show()
+
+	    print(f"Standard deviation of temporal mean intensity in colony area mask is {np.std(color_sum(self.temp_mean)[self.mask].ravel())/np.mean(color_sum(self.temp_mean)[self.mask].ravel())}")
 
 	def display_growth_curve(self, fit_interval_length = 0.7, min_lower_bound = 1.8, smooth_width = 7):  # New intensity measure
 	    N_t = self.n_times
@@ -274,10 +296,7 @@ class Colony(object):
 	        lower_bound = min_lower_bound
 
 	    upper_bound = lower_bound + fit_interval_length
-	    print('Lower bound is')
-	    print(lower_bound)
-	    print('Upper bound is')
-	    print(upper_bound)
+	    print(f"Lower bound is {lower_bound}, upper bound is {upper_bound}.")
 
 	    for k in range(len(smooth_log)):
 	        if smooth_log[k] > lower_bound:
@@ -400,6 +419,7 @@ class Plate(object):
 	def colony_centres(self):
 		'''
 		Returns a matrix of centre coordinates inside the colony segment.
+		IMPORTANT: These centre coordinates are in the coordinate system of the segment.
 		'''
 		colony_centres = np.zeros((self.layout[0],self.layout[1],2), dtype=np.uint8)
 		for i in range(self.layout[0]):
