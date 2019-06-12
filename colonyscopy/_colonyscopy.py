@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.signal import argrelmax, argrelmin
-from colonyscopy.tools import smoothen, color_distance, expand_mask, color_sum
+from colonyscopy.tools import smoothen, color_distance, expand_mask, color_sum, circle_mask
 import matplotlib.pyplot as plt
 from warnings import warn
 
@@ -34,15 +34,22 @@ class Colony(object):
 		if not hasattr(self,"_temp_mean"):
 			self._temp_mean = np.average(self.images,axis=0)
 		return self._temp_mean
-
+	@property
 	def colony_intensity(self):
+		if not hasattr(self, "_colony_intensity"):
+			self.create_colony_intensity()
+		return self._colony_intensity
+
+	def create_colony_intensity(self):
 		bg_intensity = np.empty(self.n_times)
 		col_intensity = np.empty(self.n_times)
+		self._colony_intensity = np.empty(self.n_times)
 		# Loop is necessary due to mask destroying structure
 		for t in range(self.n_times):
 			col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
 			bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
 		intensity = (col_intensity - bg_intensity)
+		self._colony_intensity = intensity
 		if (np.mean(intensity[:6]) < 0):
 			factor = 1.5 if (np.mean(intensity[:6]) < -20) else 1.8
 			background_px = color_sum(self.images[0])[self.background_mask]
@@ -50,7 +57,7 @@ class Colony(object):
 			bright_px = expand_mask(bright_px, width=3)
 			self._background_mask &= np.logical_not(bright_px)
 			try:
-				intensity = self.colony_intensity()
+				self.create_colony_intensity()
 			except(RecursionError):
 				bg_intensity = np.empty(self.n_times)
 				col_intensity = np.empty(self.n_times)
@@ -59,7 +66,6 @@ class Colony(object):
 					col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
 					bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
 				intensity = (col_intensity - bg_intensity)
-		return intensity
 
 	@property
 	def mask(self):
@@ -75,7 +81,7 @@ class Colony(object):
 		Creates a mask for colony area in this segment.
 		"""
 		t = self.threshold_timepoint
-        inner_circle = circle_mask(self.resolution, self.centre, inner_circle_width)
+		inner_circle = circle_mask(self.resolution,self.centre,inner_circle_width)
 		if t is None:
 			warn("Growth threshold was not reached. Mask created from circle around segment center.")
 			self._mask = circle_mask(self.resolution, self.centre, colony_mask_width) & self.speckle_mask
@@ -193,7 +199,7 @@ class Colony(object):
 	def test_growth_curve_computation(self, fit_interval_length = 0.7, min_lower_bound = 1.8, smooth_width = 7):
 	    N_t = self.n_times
 	    time = np.linspace(0,(N_t-1)*0.25,N_t)
-	    pl = np.copy(self.colony_intensity())
+	    pl = np.copy(self.colony_intensity)
 
 	    array_mask = pl > 0
 	    pl = pl[array_mask]
