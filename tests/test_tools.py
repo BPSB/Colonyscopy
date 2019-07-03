@@ -1,4 +1,8 @@
-from colonyscopy.tools import radial_profile, expand_mask, excentricity
+from pytest import mark
+from colonyscopy.tools import (
+		radial_profile, expand_mask,
+		new_excentricity, excentricity as old_excentricity,
+	)
 import numpy as np
 from numpy.testing import assert_array_equal
 
@@ -23,8 +27,9 @@ class TestRadialProfile(object):
 def assert_increasing(data):
 	assert np.all(np.array(data[1:])-np.array(data[:-1]))
 
+@mark.parametrize("excentricity",[old_excentricity,new_excentricity])
 class TestExcentricity(object):
-	def test_single_point(self):
+	def test_single_point(self,excentricity):
 		original_excentricity = excentricity(gaußian,centre=centre,npoints=10)
 		assert original_excentricity<1e-4
 		
@@ -33,7 +38,7 @@ class TestExcentricity(object):
 		excentricity_with_spot = excentricity(gaußian_with_spot,centre=centre,npoints=10)
 		assert excentricity_with_spot>original_excentricity
 	
-	def test_distortion_dependence(self):
+	def test_distortion_dependence(self,excentricity):
 		eccentricities = []
 		for strech_factor in 10**np.linspace(0,1,10):
 			distorted_distances = np.hypot(x,strech_factor*y)
@@ -42,7 +47,7 @@ class TestExcentricity(object):
 		
 		assert_increasing(eccentricities)
 	
-	def test_offset_dependence(self):
+	def test_offset_dependence(self,excentricity):
 		eccentricities = [
 			excentricity(gaußian,centre=centre+[offset,0],npoints=10)
 			for offset in np.linspace(0,1,10)

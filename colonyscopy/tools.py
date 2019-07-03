@@ -1,6 +1,7 @@
 from itertools import product
 from scipy.signal.windows import blackman
 from scipy.signal import convolve2d
+from scipy.stats import gaussian_kde
 import numpy as np
 from PIL import Image
 import time
@@ -82,13 +83,27 @@ def radial_profile(data,centre,smooth_width=0.5,npoints=100):
 def excentricity(data,centre,smooth_width=0.5,npoints=100):
 	abscissae,values = radial_profile(data,centre,smooth_width=2,npoints=100)
 	radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
-
+	
 	sumsq = 0
 	for i,line in enumerate(data):
 		for j,intensity in enumerate(line):
 			expected_intensity = np.interp(radii[i,j],abscissae,values)
 			sumsq += (intensity - expected_intensity)**2
 	return np.sqrt(sumsq)/data.size
+
+def new_excentricity(data,centre,width=0.1,cutoff=5,npoints=10):
+	radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
+	r_max = np.max(radii)
+	interval = [ cutoff, r_max-cutoff ]
+	abscissae = np.linspace(*interval,npoints)
+	mask = np.logical_and( interval[0]<radii, radii<interval[1] )
+	
+	kernel = gaussian_kde( radii.flatten(), bw_method=width, weights=data.flatten() )
+	normalisation = gaussian_kde( radii.flatten(), bw_method=width )
+	values = kernel.evaluate(abscissae)/normalisation.evaluate(abscissae)*np.average(data)
+	
+	expected_intensity = np.interp(radii[mask],abscissae,values)
+	return np.sqrt(np.sum((data[mask]-expected_intensity)**2))/data.size
 
 def circle_mask(resolution, centre, width):
     circle_mask = np.zeros(resolution, dtype=bool)
