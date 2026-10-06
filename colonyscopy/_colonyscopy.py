@@ -1,10 +1,13 @@
 import numpy as np
 from scipy.signal import argrelmax, argrelmin
-from colonyscopy.tools import smoothen, color_distance, expand_mask, color_sum, circle_mask
+from colonyscopy.tools import smoothen, color_distance, expand_mask, color_sum, circle_mask, radial_profile, excentricity
 import matplotlib.pyplot as plt
 from warnings import warn
 
 class ColonyscopyFailedHeuristic(Exception):
+	pass
+
+class MaskComputationFailed(ColonyscopyFailedHeuristic):
 	pass
 
 class Colony(object):
@@ -34,6 +37,7 @@ class Colony(object):
 		if not hasattr(self,"_temp_mean"):
 			self._temp_mean = np.average(self.images,axis=0)
 		return self._temp_mean
+
 	@property
 	def colony_intensity(self):
 		if not hasattr(self, "_colony_intensity"):
@@ -43,29 +47,30 @@ class Colony(object):
 	def create_colony_intensity(self):
 		bg_intensity = np.empty(self.n_times)
 		col_intensity = np.empty(self.n_times)
-		self._colony_intensity = np.empty(self.n_times)
 		# Loop is necessary due to mask destroying structure
-		for t in range(self.n_times):
-			col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
-			bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
-		intensity = (col_intensity - bg_intensity)
-		self._colony_intensity = intensity
-		if (np.mean(intensity[:6]) < 0):
-			factor = 1.5 if (np.mean(intensity[:6]) < -20) else 1.8
-			background_px = color_sum(self.images[0])[self.background_mask]
-			bright_px = np.multiply(color_sum(self.images[0]), self.background_mask) > np.mean(background_px)+factor*np.std(background_px)
-			bright_px = expand_mask(bright_px, width=3)
-			self._background_mask &= np.logical_not(bright_px)
-			try:
-				self.create_colony_intensity()
-			except(RecursionError):
-				bg_intensity = np.empty(self.n_times)
-				col_intensity = np.empty(self.n_times)
-				# Loop is necessary due to mask destroying structure
-				for t in range(self.n_times):
-					col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
-					bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
-				intensity = (col_intensity - bg_intensity)
+		try:
+			for t in range(self.n_times):
+				col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
+				bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
+			self._colony_intensity = (col_intensity - bg_intensity)
+			if (np.mean(self._colony_intensity[:6]) < 0):
+				factor = 1.5 if (np.mean(self._colony_intensity[:6]) < -20) else 1.8
+				background_px = color_sum(self.images[0])[self.background_mask]
+				bright_px = np.multiply(color_sum(self.images[0]), self.background_mask) > np.mean(background_px)+factor*np.std(background_px)
+				bright_px = expand_mask(bright_px, width=3)
+				self._background_mask &= np.logical_not(bright_px)
+				try:
+					self.create_colony_intensity()
+				except(RecursionError):
+					bg_intensity = np.empty(self.n_times)
+					col_intensity = np.empty(self.n_times)
+					# Loop is necessary due to mask destroying structure
+					for t in range(self.n_times):
+						col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
+						bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
+					self._colony_intensity = (col_intensity - bg_intensity)
+		except(MaskComputationFailed):
+			self._colony_intensity = np.zeros(self.n_times)
 
 	@property
 	def mask(self):
@@ -76,26 +81,11 @@ class Colony(object):
 			self.create_mask()
 		return self._mask
 
-	def create_mask(self, cutoff_factor = 0.5, inner_circle_width = 14, colony_mask_width = 10):
+	def create_mask(self, colony_mask_width = 10):
 		"""
 		Creates a mask for colony area in this segment.
 		"""
-		t = self.threshold_timepoint
-		inner_circle = circle_mask(self.resolution,self.centre,inner_circle_width)
-		if t is None:
-			warn("Growth threshold was not reached. Mask created from circle around segment center.")
-			self._mask = circle_mask(self.resolution, self.centre, colony_mask_width) & self.speckle_mask
-		else:
-			max = np.max(color_sum(self.images[t])[self.speckle_mask])
-			min = np.min(color_sum(self.images[t])[self.speckle_mask])
-			self._mask = np.empty(self.resolution, dtype=bool)
-			self._mask = np.multiply(color_sum(self.images[t]),self.speckle_mask) > cutoff_factor * (max+min)
-			if t == self.n_times-1:
-				warn("Segment intensity threshold was not reached. Colony area mask was created from last picture in time lapse.")
-		if np.sum(self._mask) < 120:
-			warn("Colony area mask too sparse to give reliable results.")
-		if np.sum(np.multiply(self._mask, np.logical_not(inner_circle)))/np.sum(self._mask) > 0.12:
-			warn("Significant part of colony area mask outside of inner part of the segment. Contamination is likely.")
+		self._mask = circle_mask(self.resolution, self.centre, colony_mask_width) & self.speckle_mask
 
 	@property
 	def threshold_timepoint(self):
@@ -111,16 +101,12 @@ class Colony(object):
 	def create_threshold_timepoint(self, seg_intensity_threshold = 1000, smooth_width = 10, growth_threshold = 600):
 		a = self.segment_intensity()
 		a = smoothen(a, smooth_width)
-		#self._threshold_timepoint = None
-		#"""
 		try:
 			self._threshold_timepoint = np.where(a > seg_intensity_threshold)[0][0]
 		except(IndexError):
 			self._threshold_timepoint = self.n_times-1
-			warn("Segment intensity threshold was not reached. Colony area mask will be created from last picture in time lapse.")
 			if not np.any(a > growth_threshold):
 				self._threshold_timepoint = None
-		#"""
 
 	@property
 	def background_mask(self):
@@ -139,196 +125,23 @@ class Colony(object):
 			self._background_mask = value
 
 
-	def create_background_mask(self, expansion = 6):
+	def create_background_mask(self, bg_mask_width = 18):
 		"""
 		Creates a mask that only includes background pixels of this segment.
 
 		TODO: explain parameter
 		"""
-		if self.threshold_timepoint is None:
-			self._background_mask = np.logical_not(expand_mask(self.mask, width = int(1.6*expansion)) + np.logical_not(self.speckle_mask))
-		else:
-			self._background_mask = np.logical_not(expand_mask(self.mask, width = expansion) + np.logical_not(self.speckle_mask))
+		self._background_mask = np.logical_not(circle_mask(self.resolution, self.centre, bg_mask_width)) & self.speckle_mask
 
-	def segment_intensity(self):
-		seg_intensity = np.array([np.mean(color_sum(self.images[t])[self.speckle_mask]) for t in range(self.n_times)])
-		return seg_intensity - np.average(np.sort(seg_intensity)[:7])
+	@property
+	def colony_radial_profile(self):
+		if not hasattr(self, "_colony_radial_profile"):
+			self.create_radial_profile()
+		return self._colony_radial_profile
 
-	def plot_segment_intensity(self,smooth_width = 10, seg_intensity_threshold = 1000):
-		plt.plot(self.segment_intensity(), label='Segment intensity')
-		plt.plot(smoothen(self.segment_intensity(), smooth_width), label='Smoothened segment intensity')
-		plt.plot(seg_intensity_threshold * np.ones(self.n_times), '--', label='Threshold')
-		plt.legend()
-		plt.show()
+	def create_radial_profile(self,smooth_width=0.5,npoints=60):
+		self._colony_radial_profile = radial_profile(color_sum(self.images[-1]),self.centre,np.logical_not(self.speckle_mask),smooth_width,npoints)
 
-	def generation_time(self, fit_interval_length = 0.7, min_lower_bound = 1.8, smooth_width = 7):  # New intensity measure
-	    N_t = self.n_times
-	    time = np.linspace(0,(N_t-1)*0.25,N_t)
-	    pl = np.empty((3,N_t))
-
-	    pl = self.colony_intensity()
-
-	    if np.min(pl) < 0:
-	        pl = pl+1.05*abs(np.min(pl))
-
-	    smooth_log = smoothen(np.log10(pl)[np.logical_not(np.isnan(np.log10(pl)))], smooth_width)
-	    smooth_time = time[np.logical_not(np.isnan(np.log10(pl)))]
-	    n_nan = np.sum(np.isnan(np.log10(pl)))
-# Changed minimum to min of pl instead of min of smooth log because of smoothing function
-	    lower_bound = (np.max(smooth_log)+np.min(np.log10(pl))-fit_interval_length)/2
-
-	    if lower_bound < min_lower_bound:
-	        lower_bound = min_lower_bound
-	    upper_bound = lower_bound + fit_interval_length
-
-	    for k in range(len(smooth_log)):
-	        if smooth_log[k] > lower_bound:
-	            i_0 = k+n_nan
-	            break
-
-	    for k in range(len(smooth_log)):
-	        if smooth_log[k] > upper_bound:
-	            i_f = k+n_nan
-	            break
-
-	    a = np.polyfit(time[i_0:i_f], np.log10(pl[i_0:i_f]), 1)
-
-	    gen_time = np.log10(2)/a[0]
-	    return gen_time
-
-	def test_growth_curve_computation(self, fit_interval_length = 0.7, min_lower_bound = 1.8, smooth_width = 7):
-	    N_t = self.n_times
-	    time = np.linspace(0,(N_t-1)*0.25,N_t)
-	    pl = np.copy(self.colony_intensity)
-
-	    array_mask = pl > 0
-	    pl = pl[array_mask]
-	    time = time[array_mask]
-
-	    smooth_log = smoothen(np.log10(pl), smooth_width)
-	    smooth_time = time
-# 		Changed minimum to mean of 3 smallest values of pl, bc smoothed function weird and min(pl) random
-	    lower_bound = (np.max(smooth_log)+np.mean(np.sort(np.log10(pl))[:3])-fit_interval_length)/2
-
-	    if lower_bound < min_lower_bound:
-	        lower_bound = min_lower_bound
-
-	    upper_bound = lower_bound + fit_interval_length
-
-	    for k in range(len(smooth_log)):
-	        if smooth_log[k] > lower_bound:
-	            i_0 = k
-	            break
-
-	    for k in range(len(smooth_log)):
-	        if smooth_log[k] > upper_bound:
-	            i_f = k
-	            break
-
-	    if all(smooth_log < upper_bound):
-	        i_f = len(smooth_log)-1
-
-	    a = np.polyfit(time[i_0:i_f], np.log10(pl[i_0:i_f]), 1)
-
-	    gen_time = np.log10(2)/a[0]
-
-	    print(f"Calculated generation time is {gen_time} hours.")
-	    print(f"Starting point of fit is at {time[i_0]} hours.")
-
-	    plt.figure(figsize=(12,8))
-	    plt.semilogy(time, pl, '.', label='Measurement')
-	    plt.semilogy(time[i_0:i_f], pl[i_0:i_f], '.', label='Timepoints included in fit')
-	    plt.semilogy(time[i_0:i_f], 10**(a[0]*time[i_0:i_f] + a[1]), label='Fit')
-	    plt.ylim(bottom=5)
-	    plt.xlabel('Time [h]')
-	    plt.ylabel('Intensity')
-	    plt.legend()
-	    plt.show()
-
-	    plt.imshow(self.speckle_mask, cmap='gray')
-	    plt.title('Speckle mask')
-	    plt.show()
-
-	    plt.imshow(self.background_mask, cmap='gray')
-	    plt.title('Background mask')
-	    plt.show()
-
-
-	    plt.imshow(self.mask, cmap='gray')
-	    plt.title('Colony area mask')
-	    plt.show()
-
-	    k=0
-	    for image in color_sum(self.images)[::10,:,:]:
-		    print(f"Time {time[k]} hours.")
-		    k += 10
-		    plt.imshow(image, cmap='gray')
-		    plt.show()
-
-	    plt.imshow(color_sum(self.temp_mean))
-	    plt.colorbar()
-	    plt.show()
-
-	    plt.imshow(np.multiply(color_sum(self.temp_mean), self.mask))
-	    plt.clim(np.min(color_sum(self.temp_mean)[self.mask]),np.max(color_sum(self.temp_mean)[self.mask]))
-	    plt.colorbar()
-	    plt.show()
-
-	    print(f"Standard deviation of temporal mean intensity in colony area mask is {np.std(color_sum(self.temp_mean)[self.mask].ravel())/np.mean(color_sum(self.temp_mean)[self.mask].ravel())}")
-
-	def display_growth_curve(self, fit_interval_length = 0.7, min_lower_bound = 1.8, smooth_width = 7):  # New intensity measure
-	    N_t = self.n_times
-	    time = np.linspace(0,(N_t-1)*0.25,N_t)
-
-	    pl = np.copy(self.colony_intensity())
-
-	    array_mask = pl > 0
-	    pl = pl[array_mask]
-	    time = time[array_mask]
-
-
-
-	    smooth_log = smoothen(np.log10(pl), smooth_width)
-	    smooth_time = time
-# Changed minimum to min of pl instead of min of smooth log because of smoothing function
-	    lower_bound = (np.max(smooth_log)+np.mean(np.sort(np.log10(pl))[:3])-fit_interval_length)/2
-
-	    if lower_bound < min_lower_bound:
-	        lower_bound = min_lower_bound
-
-	    upper_bound = lower_bound + fit_interval_length
-	    print(f"Lower bound is {lower_bound}, upper bound is {upper_bound}.")
-
-	    for k in range(len(smooth_log)):
-	        if smooth_log[k] > lower_bound:
-	            i_0 = k
-	            break
-
-	    for k in range(len(smooth_log)):
-	        if smooth_log[k] > upper_bound:
-	            i_f = k
-	            break
-
-	    if all(smooth_log < upper_bound):
-	        i_f = len(smooth_log)-1
-
-	    a = np.polyfit(time[i_0:i_f], np.log10(pl[i_0:i_f]), 1)
-
-	    gen_time = np.log10(2)/a[0]
-
-	    print('Calculated generation time in hours is')
-	    print(gen_time)
-
-	    plt.figure(figsize=(12,8))
-	    plt.semilogy(time, 10**(smooth_log), label='Smoothened curve')
-	    plt.semilogy(time, pl, '.', label='Measurement')
-	    plt.semilogy(time[i_0:i_f], pl[i_0:i_f], '.', label='Timepoints included in fit')
-	    plt.semilogy(time[i_0:i_f], 10**(a[0]*time[i_0:i_f] + a[1]), label='Fit')
-	    #plt.semilogy(time, pl, '.') # Just for now, for showing Andreas some data
-	    plt.xlabel('Time [h]')
-	    plt.ylabel('Intensity')
-	    plt.legend()
-	    plt.show()
 
 	def _gradient_mask(self,threshold = 1000):
 		"""
@@ -411,6 +224,7 @@ class Plate(object):
 					break
 			else:
 				# good smooth width → break outer loop
+				print(f'Smooth width = {smooth_width}')
 				break
 		else:
 			# no good smooth width at all:
@@ -422,12 +236,13 @@ class Plate(object):
 		Returns a matrix of centre coordinates inside the colony segment.
 		IMPORTANT: These centre coordinates are in the coordinate system of the segment.
 		'''
-		colony_centres = np.zeros((self.layout[0],self.layout[1],2), dtype=np.uint8)
-		for i in range(self.layout[0]):
-			for j in range(self.layout[1]):
-				colony_centres[i][j][0] = int(self.centres[i][j][0] - self.borders[0][i])
-				colony_centres[i][j][1] = int(self.centres[i][j][1] - self.borders[1][j])
-		return colony_centres
+		if not hasattr(self, "_colony_centres"):
+			self._colony_centres = np.zeros((self.layout[0],self.layout[1],2), dtype=np.uint8)
+			for i in range(self.layout[0]):
+				for j in range(self.layout[1]):
+					self._colony_centres[i][j][0] = int(self.centres[i][j][0] - self.borders[0][i])
+					self._colony_centres[i][j][1] = int(self.centres[i][j][1] - self.borders[1][j])
+		return self._colony_centres
 
 	@property
 	def coordinates(self):
