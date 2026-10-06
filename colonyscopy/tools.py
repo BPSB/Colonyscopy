@@ -1,8 +1,8 @@
 from itertools import product
 from scipy.signal.windows import blackman
 from scipy.signal import convolve2d
-from scipy.stats import gaussian_kde
 import numpy as np
+import numpy.ma as ma
 from PIL import Image
 import time
 import psutil
@@ -67,43 +67,35 @@ def gaussian_profile(abscissae,position,width):
 	profile = np.exp(-((abscissae-position)/width)**2/2)
 	return profile/sum(profile)
 
-def radial_profile(data,centre,smooth_width=0.5,npoints=100):
-	radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
-	r_max = np.max(radii)
-	abscissae = np.linspace(0,r_max,npoints)
-	sums = np.zeros_like(abscissae)
-	normalisation = np.zeros_like(abscissae)
-	for i,radii_line in enumerate(radii):
-		for j,radius in enumerate(radii_line):
-			profile = gaussian_profile(abscissae,radius,smooth_width)
-			normalisation += profile
-			sums += profile*data[i,j]
-	return abscissae,sums/normalisation
+def radial_profile(data,centre,speckle_mask=None,smooth_width=0.5,npoints=60):
+    radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
+    radii = ma.masked_array(radii, mask=speckle_mask)
+    data = ma.masked_array(data, mask=speckle_mask)
+    r_max = np.max(radii)
+    abscissae = np.linspace(0,r_max,npoints)
+    sums = np.zeros_like(abscissae)
+    normalisation = np.zeros_like(abscissae)
+    for i,radii_line in enumerate(radii):
+        for j,radius in enumerate(radii_line):
+            if not data[i,j] is ma.masked:
+                profile = gaussian_profile(abscissae,radius,smooth_width)
+                normalisation += profile
+                sums += profile*data[i,j]
+    return abscissae,sums/normalisation
 
-def excentricity(data,centre,smooth_width=0.5,npoints=100):
-	abscissae,values = radial_profile(data,centre,smooth_width=2,npoints=100)
-	radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
-	
-	sumsq = 0
-	for i,line in enumerate(data):
-		for j,intensity in enumerate(line):
-			expected_intensity = np.interp(radii[i,j],abscissae,values)
-			sumsq += (intensity - expected_intensity)**2
-	return np.sqrt(sumsq)/data.size
+def excentricity(data,centre,speckle_mask=None,smooth_width=0.5,npoints=60):
+    abscissae,values = radial_profile(data,centre,speckle_mask,smooth_width=2.0,npoints=60)
+    radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
+    radii = ma.masked_array(radii, mask=speckle_mask)
+    data = ma.masked_array(data, mask=speckle_mask)
 
-def new_excentricity(data,centre,width=0.1,cutoff=5,npoints=10):
-	radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
-	r_max = np.max(radii)
-	interval = [ cutoff, r_max-cutoff ]
-	abscissae = np.linspace(*interval,npoints)
-	mask = np.logical_and( interval[0]<radii, radii<interval[1] )
-	
-	kernel = gaussian_kde( radii.flatten(), bw_method=width, weights=data.flatten() )
-	normalisation = gaussian_kde( radii.flatten(), bw_method=width )
-	values = kernel.evaluate(abscissae)/normalisation.evaluate(abscissae)*np.average(data)
-	
-	expected_intensity = np.interp(radii[mask],abscissae,values)
-	return np.sqrt(np.sum((data[mask]-expected_intensity)**2))/data.size
+    sumsq = 0
+    for i,line in enumerate(data):
+        for j,intensity in enumerate(line):
+            if not data[i,j] is ma.masked:
+                expected_intensity = np.interp(radii[i,j],abscissae,values)
+                sumsq += (intensity - expected_intensity)**2
+    return np.sqrt(sumsq)/data.size
 
 def circle_mask(resolution, centre, width):
     circle_mask = np.zeros(resolution, dtype=bool)
