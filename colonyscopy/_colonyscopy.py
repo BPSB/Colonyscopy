@@ -98,6 +98,10 @@ class Colony(object):
 			self.create_threshold_timepoint()
 		return self._threshold_timepoint
 
+	def segment_intensity(self):
+		seg_intensity = np.array([np.mean(color_sum(self.images[t])[self.speckle_mask]) for t in range(self.n_times)])
+		return seg_intensity - np.average(np.sort(seg_intensity)[:7])
+
 	def create_threshold_timepoint(self, seg_intensity_threshold = 1000, smooth_width = 10, growth_threshold = 600):
 		a = self.segment_intensity()
 		a = smoothen(a, smooth_width)
