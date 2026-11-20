@@ -5,9 +5,17 @@ import matplotlib.pyplot as plt
 from warnings import warn
 
 class ColonyscopyFailedHeuristic(Exception):
+	"""
+	Raised when an automatic analysis heuristic fails to produce a reliable result.
+	Manual adjustment or inspection of the input images may be necessary.
+	"""
 	pass
 
+
 class MaskComputationFailed(ColonyscopyFailedHeuristic):
+	"""
+	Raised when a valid colony or background mask cannot be computed.
+	"""
 	pass
 
 class Colony(object):
@@ -16,66 +24,140 @@ class Colony(object):
 
 		Parameters
 		----------
-		images : NumPy array
-			A four-dimensional array containing the data for the actual colony. This can be a slice of a bigger array. The first dimension is time; the next two dimensions are spacial; the last dimension has length 3 and is colour.
+		images : numpy.ndarray
+			A four-dimensional array containing the colony image time series, with the shape (time, height, width, colour channels).
 
-		background : NumPy array
-			A three-dimensional array containing the background, i.e., what to expect in the absence of a colony. The first two dimensions are spacial; the last dimension has length 3 and is colour.
+		background : numpy.ndarray
+			A three-dimensional array containing the background, with the shape (height, width, colour channels). Typically derived from a reference image of the plate before any colony growth.
+
+		speckle_mask : boolean numpy.ndarray
+			Two-dimensional mask with shape (height, width). False indicates pixels excluded due to unwanted image features.
+
+		centre : array-like of int
+			Colony centre coordinates (row, column), relative to the colony image segment.
+
+
+		Attributes
+		----------
+		resolution : tuple of int
+			Spatial image dimensions (height, width).
+
+		n_colours : int
+			Number of colour channels.
+
+		n_times : int
+			Number of time points in the image series.
+
+		Notes
+		-----
+		Several calculated properties are cached and are not automatically updated if the underlying image data changes.
 	"""
 
 	def __init__(self,images,background,speckle_mask,centre):
+		#parameters
 		self.images = images
 		self.background = background
 		self.speckle_mask = speckle_mask
 		self.centre = centre
+
+		#attributes
 		self.resolution = images.shape[1:3]
 		self.n_colours = images.shape[3]
 		self.n_times = images.shape[0]
 
 	@property
 	def temp_mean(self):
+		"""
+			Calculates the pixel-wise average across all time points of the image series.
+
+			Returns
+			-------
+			numpy.ndarray
+				Mean image with shape (height, width, channels).
+		"""
 		if not hasattr(self,"_temp_mean"):
 			self._temp_mean = np.average(self.images,axis=0)
 		return self._temp_mean
 
 	@property
 	def colony_intensity(self):
+		"""
+			The colony intensities calculated with :meth:`create_colony_intensity`.
+
+			Returns
+			-------
+			numpy.ndarray
+				One-dimensional array of background-corrected colony intensities.
+		"""
 		if not hasattr(self, "_colony_intensity"):
 			self.create_colony_intensity()
 		return self._colony_intensity
 
 	def create_colony_intensity(self):
+		"""
+			Calculates the background-corrected colony intensity over time.
+
+			For each time point, the median background intensity is subtracted from the mean colony intensity.
+			If the mean corrected intensity of the first six time points is negative, unusually bright background regions are excluded and the
+			intensities are recalculated.
+
+			If background mask computation fails, the intensity time
+			series is set to zero.
+
+			Background mask refinement uses recursion. If the recursion limit is reached, intensities are recalculated using the current masks.
+		"""
 		bg_intensity = np.empty(self.n_times)
 		col_intensity = np.empty(self.n_times)
 		# Loop is necessary due to mask destroying structure
 		try:
+			if not np.any(self.mask):
+				raise MaskComputationFailed("Colony mask contains no valid pixels.")
+
+			if not np.any(self.background_mask):
+				raise MaskComputationFailed("Background mask contains no valid pixels.")
+
 			for t in range(self.n_times):
 				col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
 				bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
+
 			self._colony_intensity = (col_intensity - bg_intensity)
+
+			#negative intensities may be because of bright background artifacts
 			if (np.mean(self._colony_intensity[:6]) < 0):
-				factor = 1.5 if (np.mean(self._colony_intensity[:6]) < -20) else 1.8
+				factor = 1.5
 				background_px = color_sum(self.images[0])[self.background_mask]
+
 				bright_px = np.multiply(color_sum(self.images[0]), self.background_mask) > np.mean(background_px)+factor*np.std(background_px)
 				bright_px = expand_mask(bright_px, width=3)
+
+				old_mask = self._background_mask.copy()
 				self._background_mask &= np.logical_not(bright_px)
-				try:
-					self.create_colony_intensity()
-				except(RecursionError):
-					bg_intensity = np.empty(self.n_times)
-					col_intensity = np.empty(self.n_times)
-					# Loop is necessary due to mask destroying structure
-					for t in range(self.n_times):
-						col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
-						bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
-					self._colony_intensity = (col_intensity - bg_intensity)
+
+				if not np.array_equal(old_mask, self._background_mask):
+					try:
+						self.create_colony_intensity() #recalculate intensities using the corrected background mask.
+
+					except(RecursionError):
+						bg_intensity = np.empty(self.n_times)
+						col_intensity = np.empty(self.n_times)
+						# Loop is necessary due to mask destroying structure
+						for t in range(self.n_times):
+							col_intensity[t] = np.mean(color_sum(self.images[t,:,:])[self.mask])
+							bg_intensity[t] = np.median(color_sum(self.images[t,:,:])[self.background_mask])
+						self._colony_intensity = (col_intensity - bg_intensity)
+
 		except(MaskComputationFailed):
 			self._colony_intensity = np.zeros(self.n_times)
 
 	@property
 	def mask(self):
 		"""
-		Returns the mask for colony area for this segment.
+			The mask for colony area for this segment.
+
+			Returns
+			-------
+			boolean numpy.ndarray
+				Two-dimensional mask where True indicates pixels included in colony measurements.
 		"""
 		if not hasattr(self,"_mask"):
 			self.create_mask()
@@ -83,41 +165,49 @@ class Colony(object):
 
 	def create_mask(self, colony_mask_width = 10):
 		"""
-		Creates a mask for colony area in this segment.
+			Creates a circular mask for measuring colony intensity in this segment.
+			A circular region centred on the colony is combined with the speckle mask. True indicates valid pixels within the circular region.
+
+			Parameters
+			----------
+			colony_mask_width : int, optional
+				Radius of the circular colony measurement region in pixels. Default is 10.
+
+			Notes
+			-----
+			Calling this method again overwrites the existing colony mask.
 		"""
 		self._mask = circle_mask(self.resolution, self.centre, colony_mask_width) & self.speckle_mask
 
-	@property
-	def threshold_timepoint(self):
-		"""
-		Returns the timepoint when intensity thresholding should be done to determine colony area.
-
-		TODO: explain parameter
-		"""
-		if not hasattr(self,"_threshold_timepoint"):
-			self.create_threshold_timepoint()
-		return self._threshold_timepoint
-
 	def segment_intensity(self):
+		"""
+			Calculates the baseline-corrected intensity of the entire segment.
+			The baseline is defined as the average of the seven lowest segment intensities across the time series.
+
+			Returns
+			-------
+			numpy.ndarray
+				One-dimensional array containing the baseline-corrected segment intensity for each time point.
+
+			Notes
+			-----
+			Unlike ``colony_intensity``, this method uses all valid pixels in the segment rather than a circular colony mask.
+		"""
+		if not np.any(self.speckle_mask):
+			raise MaskComputationFailed("No valid pixels remain for segment intensity calculation.")
+
 		seg_intensity = np.array([np.mean(color_sum(self.images[t])[self.speckle_mask]) for t in range(self.n_times)])
 		return seg_intensity - np.average(np.sort(seg_intensity)[:7])
-
-	def create_threshold_timepoint(self, seg_intensity_threshold = 1000, smooth_width = 10, growth_threshold = 600):
-		a = self.segment_intensity()
-		a = smoothen(a, smooth_width)
-		try:
-			self._threshold_timepoint = np.where(a > seg_intensity_threshold)[0][0]
-		except(IndexError):
-			self._threshold_timepoint = self.n_times-1
-			if not np.any(a > growth_threshold):
-				self._threshold_timepoint = None
 
 	@property
 	def background_mask(self):
 		"""
-		Returns the mask for background pixels in this segment.
+			The mask for background pixels in this segment.
 
-		TODO: explain parameter
+			Returns
+			-------
+			boolean numpy.ndarray
+				Two-dimensional mask, where True indicates pixels included in background measurements.
 		"""
 		if not hasattr(self,"_background_mask"):
 			self.create_background_mask()
@@ -125,53 +215,69 @@ class Colony(object):
 
 	@background_mask.setter
 	def background_mask(self,value):
-		if (np.shape(value) == self.resolution) & (value.dtype == bool): #Check if value boolean
+		"""
+			Sets the background mask if its shape and data type are valid.
+
+			Parameters
+			----------
+			value : boolean numpy.ndarray
+				New background mask with the same shape as ``resolution``.
+
+			Notes
+			-----
+			If the supplied mask has an incorrect shape or data type, the assignment is ignored without raising an exception.
+		"""
+		if (np.shape(value) == self.resolution) & (value.dtype == bool):
 			self._background_mask = value
 
 
 	def create_background_mask(self, bg_mask_width = 18):
 		"""
-		Creates a mask that only includes background pixels of this segment.
+			Creates a mask that only includes background pixels of this segment.
 
-		TODO: explain parameter
+			Parameters
+			----------
+			bg_mask_width : int, optional
+				Radius of the circular region excluded from background measurements, in pixels. Default is 18.
+
+			Notes
+			-----
+			Calling this method again overwrites the existing background mask.
 		"""
 		self._background_mask = np.logical_not(circle_mask(self.resolution, self.centre, bg_mask_width)) & self.speckle_mask
 
 	@property
 	def colony_radial_profile(self):
+		"""
+			The radial intensity profile of the colony.
+
+			Returns
+			-------
+			tuple of numpy.ndarray
+				Two one-dimensional arrays containing radial distances in pixels and the corresponding estimated mean colour-summed intensities.
+		"""
 		if not hasattr(self, "_colony_radial_profile"):
 			self.create_radial_profile()
 		return self._colony_radial_profile
 
 	def create_radial_profile(self,smooth_width=0.5,npoints=60):
+		"""
+			Calculates the radial intensity profile of the colony using the colour-summed intensity of the final image in the time series.
+
+			Parameters
+			----------
+			smooth_width : float, optional
+				Width of the Gaussian weighting function used for radial smoothing, in pixels. Default is 0.5.
+
+			npoints : int, optional
+				Number of evenly spaced radial sampling points between zero and the maximum unmasked distance from the colony centre. Default is 60.
+
+			Notes
+			-----
+			The radial profile is not automatically recalculated if the underlying image data or speckle mask changes.
+		"""
 		self._colony_radial_profile = radial_profile(color_sum(self.images[-1]),self.centre,np.logical_not(self.speckle_mask),smooth_width,npoints)
 
-
-	def _gradient_mask(self,threshold = 1000):
-		"""
-		Returns pixels in the background with a high gradient.
-		"""
-		return np.linalg.norm(np.gradient(color_sum(self.background),axis=(0,1)),axis=0) > threshold
-
-	def _intensity_mask(self,factor = 4, threshold = None):
-		"""
-		Returns pixels of the background whose intensity is outside of `factor` times the standard deviation of all pixels.
-		"""
-		background_intensity = color_sum(self.background)
-		if threshold == None:
-		    return background_intensity > np.mean(background_intensity)+factor*np.std(background_intensity)
-		else:
-			return background_intensity > threshold
-
-	def _temporal_mask(self,threshold = 1200):
-		"""
-		Returns pixels where the colour changes suddenly in time.
-		"""
-		matrix = np.zeros(self.resolution,dtype=bool)
-		matrix |= color_distance(self.images[0],self.background) > threshold
-		for t in range(self.n_times-1):
-			matrix |= color_distance(self.images[t+1],self.images[t]) > threshold
-		return matrix
 
 class Plate(object):
 	"""
