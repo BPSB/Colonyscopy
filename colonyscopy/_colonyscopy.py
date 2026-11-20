@@ -451,55 +451,173 @@ class Plate(object):
 		"""
 		return [np.hstack((0, ((self.coordinates[i][1:]+self.coordinates[i][:-1])/2).astype(int), self.resolution[i])) for i in (0,1)]
 
-	def _gradient_mask(self,threshold = 1000):
+	def _gradient_mask(self,factor=10):
 		"""
-		Returns pixels in the background with a high gradient.
+			Detects pixels with unusually high background gradients.
+
+			Parameters
+			----------
+			factor : float, optional
+				Multiplier applied to the scaled median absolute deviation. Default is 10.
+
+			Returns
+			-------
+			boolean numpy.ndarray
+				Two-dimensional mask where True indicates pixels exceeding the gradient threshold.
 		"""
-		return np.linalg.norm(np.gradient(color_sum(self.background),axis=(0,1)),axis=0) > threshold
+
+		gradients = np.linalg.norm(np.gradient(color_sum(self.background),axis=(0,1)),axis=0)
+		median = np.median(gradients)
+		mad = np.median(np.abs(gradients - median))
+		threshold = median + factor * 1.4826 * mad
+
+		return gradients > threshold
 
 	def _intensity_mask(self,factor = 4):
 		"""
-		Returns pixels of the background whose intensity is outside of `factor` times the standard deviation of all pixels.
+			Detects unusually bright pixels in the background image.
+
+			Parameters
+			----------
+			factor : float, optional
+				Number of standard deviations above the mean background intensity used as the threshold. Default is 4.
+
+			Returns
+			-------
+			boolean numpy.ndarray
+				Two-dimensional mask where True indicates pixels exceeding the intensity threshold.
 		"""
+
 		background_intensity = color_sum(self.background)
 		return background_intensity > np.mean(background_intensity)+factor*np.std(background_intensity)
 
-		#TODO: include particularly dark pixels, work with percentiles.
+	def _colony_reference_mask(self, radius=10):
+		"""
+			Creates a reference mask around colony centres to define regions used to calibrate the temporal change threshold.
 
-	def _temporal_mask(self,threshold = 1200):
+			Parameters
+			----------
+			radius : int, optional
+				Radius of the circular regions around colony centres in pixels. Default is 10.
+
+			Returns
+			-------
+			boolean numpy.ndarray
+				Two-dimensional mask where True indicates pixels within the colony reference regions.
 		"""
-		Returns pixels where the colour changes suddenly in time.
+
+		mask = np.zeros(self.resolution, dtype=bool)
+		for row, col in self.centres.reshape(-1, 2):
+			mask[int(row), int(col)] = True
+
+		return expand_mask(mask, radius)
+
+	def _temporal_mask(self,radius=10,safety_factor=1.25,percentile=None):
 		"""
-		matrix = np.zeros(self.resolution,dtype=bool)
-		matrix |= color_distance(self.images[0],self.background) > threshold
+		Detects unusually large colour changes between consecutive images.
+
+		Parameters
+		----------
+		radius : int, optional
+			Radius of colony reference regions in pixels. Default is 10.
+
+		safety_factor : float, optional
+			Multiplier applied to the reference colour-change threshold. Default is 1.25.
+
+		percentile : float, optional
+			Percentile of colour changes within colony reference regions. Default is None.
+			If 0, the percentile is determined automatically based on the number of images.
+
+		Returns
+		-------
+		boolean numpy.ndarray
+			Two-dimensional mask where True indicates pixels exceeding the temporal change threshold.
+		"""
+		if percentile is None:
+			percentile=100-10**(-3-(self.n_times-10)/40)
+
+		colony_regions=self._colony_reference_mask(radius)
+		histogram=np.zeros(766,dtype=np.int64)
+
 		for t in range(self.n_times-1):
-			matrix |= color_distance(self.images[t+1],self.images[t]) > threshold
-		return matrix
+			before=self.images[t][colony_regions].astype(np.int16)
+			after=self.images[t+1][colony_regions].astype(np.int16)
+			difference=np.abs(after-before).sum(axis=-1)
+			histogram+=np.bincount(difference,minlength=766)
 
-	def create_speckle_mask(self,
-				gradient_threshold = 1000,
-				intensity_factor = 4,
-				temporal_threshold = 1200,
-				expansion = 3,
-			):
+		cumulative=np.cumsum(histogram)
+		rank=(percentile/100)*(cumulative[-1]-1)
+		lower_rank=int(np.floor(rank))
+		upper_rank=int(np.ceil(rank))
+		lower=np.searchsorted(cumulative,lower_rank+1)
+		upper=np.searchsorted(cumulative,upper_rank+1)
+
+		reference_change=lower+(rank-lower_rank)*(upper-lower)
+		threshold=safety_factor*reference_change
+
+		mask=np.zeros(self.resolution,dtype=bool)
+
+		for t in range(self.n_times-1):
+			difference=np.zeros(self.resolution,dtype=np.float64)
+
+			for channel in range(self.n_colours):
+				before=self.images[t,:,:,channel].astype(np.int16)
+				after=self.images[t+1,:,:,channel].astype(np.int16)
+				difference+=np.abs(after-before)
+
+			mask|=difference>threshold
+
+		return mask
+
+	def create_speckle_mask(self,expansion=3,gradient_factor=10,intensity_factor=4,temporal_radius=10,temporal_safety_factor=1.25,temporal_percentile=None,use_gradient=True,use_intensity=True,use_temporal=True):
 		"""
-		Tries to automatically detect speckles.
+			Creates the combined speckle mask for the plate, using selected detection methods. Default are gradient, intensity and temporal masks.
+			Detected regions are expanded and excluded from further analysis.
+			The resulting mask contains True for valid pixels and False for excluded pixels.
 
-		TODO:
-		explain parameters
+			Parameters
+			----------
+			expansion : int, optional
+				Radius used to expand detected speckles. Default is 3
+
+			gradient_factor : float, optional
+				Factor controlling the adaptive gradient threshold. Default is 10.
+
+			intensity_factor : float, optional
+				Number of standard deviations above the mean intensity. Default is 4.
+
+			temporal_radius : int, optional
+				Radius of colony reference regions. Default is 10.
+
+			temporal_safety_factor : float, optional
+				Multiplier applied to the temporal reference threshold. Default is 1.25.
+
+			temporal_percentile : float, optional
+				Percentile used for temporal threshold calibration. If None, the percentile is determined automatically based on the number of images. Default is None.
+
+			use_gradient : bool, optional
+				Whether to include gradient-based detection.
+
+			use_intensity : bool, optional
+				Whether to include intensity-based detection.
+
+			use_temporal : bool, optional
+				Whether to include temporal detection.
 		"""
-		self._speckle_mask = np.logical_not(expand_mask(
-				  self._gradient_mask(gradient_threshold)
-				| self._intensity_mask(intensity_factor)
-				| self._temporal_mask(temporal_threshold),
-				width = expansion
-			))
 
-	@property
-	def speckle_mask(self):
-		if not hasattr(self,"_speckle_mask"):
-			self.create_speckle_mask()
-		return self._speckle_mask
+		mask = np.zeros(self.resolution, dtype=bool)
+
+		if use_gradient:
+			mask |= self._gradient_mask(gradient_factor)
+		if use_intensity:
+			mask |= self._intensity_mask(intensity_factor)
+		if use_temporal:
+			mask |= self._temporal_mask(radius=temporal_radius,safety_factor=temporal_safety_factor,percentile=temporal_percentile)
+
+		if expansion > 0:
+			mask = expand_mask(mask, width=expansion)
+
+		self._speckle_mask = ~mask
 
 	def create_colonies(self):
 		"""
