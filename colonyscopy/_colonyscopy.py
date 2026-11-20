@@ -281,107 +281,175 @@ class Colony(object):
 
 class Plate(object):
 	"""
-		The basic class for handling plates with colonies.
+		Class representing a plate containing colonies arranged in a rectangular grid.
 
 		Parameters
 		----------
-		images : NumPy array
-			A four-dimensional array containing all the raw data.
-			The first dimension is time; the next two dimensions are spacial; the last dimension has length 3 and is colour.
+		images : numpy.ndarray
+			Four-dimensional image time series with shape (time, height, width, colour channels).
 
-		layout : pair of integers
-			The number of colonies in each direction of the plate.
+		layout : array-like of int, optional
+			Number of colony rows and columns on the plate. Default is (8, 12).
 
-		bg : array-like or None
-			The background, i.e., what to expect in absence of colonies.
+		bg : array-like or None, optional
+			Reference background used for colony detection. Default is None.
+			If None, a spatially uniform background is estimated from the mean colour values of the first image. Alternatively, a colour vector or background image can be provided.
 
-			* If `None`, the background will be guessed automatically.
-			* If a length-three sequence, the background will be taken to be homogeneous in that color.
-			* If an array with the same dimensions as an image, this will be taken as a background image.
+		Attributes
+		----------
+		resolution : tuple of int
+			Spatial image dimensions (height, width).
+
+		n_colours : int
+			Number of colour channels.
+
+		n_times : int
+			Number of time points in the image series.
+
+		background : numpy.ndarray
+			Reference background used for colony detection.
+
+		Notes
+		-----
+		Colony detection assumes a regular rectangular grid.
+		Several calculated properties are cached and are not automatically updated if the underlying image data changes.
 	"""
 
 	def __init__(self,images,layout=(8,12),bg=None):
+		#parameters
 		self.images = images
 		self.layout = np.asarray(layout,dtype=int)
+		# attributes
 		self.resolution = images.shape[1:3]
 		self.n_colours = images.shape[3]
 		self.n_times = images.shape[0]
+
 		if bg is None:
-			self.background = np.average(images[0],axis=(0,1))
+			mean_color = np.average(images[0], axis=(0, 1))
+			self.background = np.broadcast_to(mean_color, images.shape[1:])
+
 		else:
 			self.background = np.asarray(bg)
 
 	@property
 	def temp_mean(self):
+		"""
+			Calculates the pixel-wise average across all time points.
+
+			Returns
+			-------
+			numpy.ndarray
+				Mean image with shape (height, width, colour channels).
+		"""
 		if not hasattr(self,"_temp_mean"):
 			self._temp_mean = np.average(self.images,axis=0)
 		return self._temp_mean
 
 	def segment(self):
 		"""
-		Tries to automatically segment the images into individual colonies.
+			Detects colony positions in the plate image.
+
+			Calculates the colour distance between the temporal mean image and the background.
+			Row and column intensity profiles are used to identify colony positions.
+
+			Different smoothing widths are tested until the expected number of intensity peaks is detected in both directions.
+
+			Notes
+			-----
+			Assumes colonies are arranged in a regular rectangular grid, with one detectable peak per row and column.
+			Raises ColonyscopyFailedHeuristic if no suitable smoothing width produces the expected number of peaks.
 		"""
+
 		intensities = color_distance(self.temp_mean,self.background)
 		profiles = [np.average(intensities,axis=i) for i in (1,0)]
 
 		for smooth_width in range(1,int(self.resolution[0]/self.layout[0])):
 			self._coordinates = [None,None]
+			counts = []
+
 			for i in (0,1):
 				smooth_profile = smoothen(profiles[i],smooth_width)
 				self._coordinates[i] = argrelmax(smooth_profile)[0]
-				if len(self._coordinates[i]) != self.layout[i]:
-					# bad smooth width → continue outer loop
-					break
+				counts.append(len(self._coordinates[i]))
+
+
+			if counts[0] != self.layout[0] or counts[1] != self.layout[1]:
+				continue
+
 			else:
-				# good smooth width → break outer loop
 				print(f'Smooth width = {smooth_width}')
 				break
+
 		else:
-			# no good smooth width at all:
-			raise ColonyscopyFailedHeuristic("Could not detect colony coordinates. Check if layout in right order.")
+			raise ColonyscopyFailedHeuristic(f"Could not detect colony coordinates. "
+											 f"Rows: {counts[0]} peaks detected, "
+											 f"expected {self.layout[0]}. "
+											 f"Columns: {counts[1]} peaks detected, "
+											 f"expected {self.layout[1]}. "
+											 f"Check the crop and layout.")
 
 	@property
 	def colony_centres(self):
-		'''
-		Returns a matrix of centre coordinates inside the colony segment.
-		IMPORTANT: These centre coordinates are in the coordinate system of the segment.
-		'''
+		"""
+			The colony centre coordinates relative to each segment.
+
+			Returns
+			-------
+			numpy.ndarray
+				Array with shape (rows, columns, 2), containing the centre coordinates in pixels relative to each colony segment.
+		"""
 		if not hasattr(self, "_colony_centres"):
-			self._colony_centres = np.zeros((self.layout[0],self.layout[1],2), dtype=np.uint8)
+			self._colony_centres = np.zeros((self.layout[0],self.layout[1],2), dtype=int)
+
 			for i in range(self.layout[0]):
 				for j in range(self.layout[1]):
 					self._colony_centres[i][j][0] = int(self.centres[i][j][0] - self.borders[0][i])
 					self._colony_centres[i][j][1] = int(self.centres[i][j][1] - self.borders[1][j])
+
 		return self._colony_centres
 
 	@property
 	def coordinates(self):
 		"""
-		Returns a pair of one-dimensional arrays containing for each direction the coordinates where colonies are placed.
+			The detected colony positions.
+
+			Returns
+			-------
+			list of numpy.ndarray
+				Two one-dimensional arrays containing the row and column positions of the detected colony centres.
 		"""
 		if not hasattr(self,"_coordinates"):
 			self.segment()
+
 		return self._coordinates
 
 	@property
 	def centres(self):
 		"""
-		Returns a three dimensional array, containing the centres of the colonies by two-dimensional index.
+			The colony centre coordinates in the plate image.
+
+			Returns
+			-------
+			numpy.ndarray
+				Array with shape (rows, columns, 2), containing the centre coordinates in pixels relative to the full plate image.
 		"""
 		return np.dstack(np.meshgrid(*self.coordinates,indexing="ij"))
 
 	@property
 	def borders(self):
 		"""
-		Returns a pair of one-dimensional arrays containing for each direction the positions of borders of colonies (including 0 and the image size).
+			Calculates the boundaries separating individual colony segments.
+
+			Returns
+			-------
+			list of numpy.ndarray
+				Two one-dimensional arrays containing the row and column boundaries of the colony segments.
+
+			Notes
+			-----
+			Boundaries are placed halfway between neighbouring colony centres, including the image edges.
 		"""
-		return [
-				np.hstack((
-					0,
-					((self.coordinates[i][1:]+self.coordinates[i][:-1])/2).astype(int),
-					self.resolution[i]))
-				for i in (0,1)
-			]
+		return [np.hstack((0, ((self.coordinates[i][1:]+self.coordinates[i][:-1])/2).astype(int), self.resolution[i])) for i in (0,1)]
 
 	def _gradient_mask(self,threshold = 1000):
 		"""
@@ -434,34 +502,78 @@ class Plate(object):
 		return self._speckle_mask
 
 	def create_colonies(self):
+		"""
+			Creates individual Colony objects from the plate image series.
+
+			The images, reference background and speckle mask are divided into segments using the detected colony boundaries.
+			Each segment is assigned its corresponding colony centre.
+
+			The speckle mask must be created using :meth:`create_speckle_mask` before calling this method.
+		"""
 		x = self.borders[0]
 		y = self.borders[1]
+
 		self._colonies = np.array(
 				[[Colony(self.images[:,x[i]:x[i+1],y[j]:y[j+1],:],
 						self.background[x[i]:x[i+1],y[j]:y[j+1],:],
-						self.speckle_mask[x[i]:x[i+1],y[j]:y[j+1]],
-						self.colony_centres[i][j]) for i in range(self.layout[0])]
-				for j in range(self.layout[1])]
+						self._speckle_mask[x[i]:x[i+1],y[j]:y[j+1]],
+						self.colony_centres[i][j])
+				  for j in range(self.layout[1])]
+				for i in range(self.layout[0])]
 			, dtype=object)
 
 	@property
 	def colonies(self):
+		"""
+			The Colony objects belonging to the plate.
+
+			Returns
+			-------
+			numpy.ndarray
+				Two-dimensional object array containing one Colony object per plate position.
+		"""
 		if not hasattr(self,"_colonies"):
 			self.create_colonies()
 		return self._colonies
 
-	def all_colonies(self):
+	def all_colonies(self): #generator
 		"""
-			Returns a generator over all colonies of the plate.
+			Iterates over all colonies on the plate.
+
+			Yields
+			------
+			Colony
+				The next Colony object, starting from the first row.
 		"""
-		for i in layout[0]:
-			for j in layout[1]:
+		for i in range(self.layout[0]):
+			for j in range(self.layout[1]):
 				yield self.colonies[i][j]
 
 	def __iter__(self):
+		"""
+			Allows iteration over the rows of colonies.
+
+			Returns
+			-------
+			iterator
+				Iterator that returns one row of Colony objects at a time.
+		"""
 		return self.colonies.__iter__()
 
 	def __getitem__(self,arg):
+		"""
+			Accesses colonies using array indexing.
+
+			Parameters
+			----------
+			arg : int, slice or tuple
+				Index used to select colonies from the colony array.
+
+			Returns
+			-------
+			Colony or numpy.ndarray
+				Selected colony or subset of the colony array.
+		"""
 		return self.colonies[arg]
 
 	def localise_colonies(self,*args,**kwargs):
