@@ -1,11 +1,80 @@
-from itertools import product
 from scipy.signal.windows import blackman
 from scipy.signal import convolve2d
 import numpy as np
 import numpy.ma as ma
 from PIL import Image
+from pathlib import Path
 import time
 import psutil
+import rawpy
+
+def load_images(paths):
+	"""
+		Loads an image time series from a provided order of file paths.
+		CR2 files are decoded using rawpy, while other supported image formats are loaded using Pillow.
+
+		Parameters
+		----------
+		paths : iterable of str or pathlib.Path
+			Paths to the images in the desired time series order.
+
+		Returns
+		-------
+		numpy.ndarray
+			Image time series with shape (time, height, width, channels) for RGB images.
+
+		Raises
+		------
+		ValueError
+			If no images are provided, an unsupported image format is encountered, or image shapes or data types do not match.
+
+		RuntimeError
+			If a RAW image cannot be decoded.
+	"""
+	paths = [Path(path) for path in paths]
+	extensions = {".cr2",".jpg",".jpeg",".png",".tif",".tiff"}
+
+	if not paths:
+		raise ValueError("No image files provided")
+
+	for path in paths:
+		if path.suffix.lower() not in extensions:
+			raise ValueError(f"Unsupported image format: {path}")
+
+	def read_image(path):
+		if path.suffix.lower() == ".cr2":
+			with rawpy.imread(str(path)) as raw:
+				return raw.postprocess(output_bps=8,use_camera_wb=True)
+		else:
+			with Image.open(path) as img:
+				return np.array(img)
+
+	try:
+		first_frame = read_image(paths[0])
+	except rawpy.LibRawDataError as e:
+		raise RuntimeError(f"Failed to decode image 1/{len(paths)}: {paths[0]}") from e
+
+	images = np.empty((len(paths),*first_frame.shape),dtype=first_frame.dtype)
+	images[0] = first_frame
+	del first_frame
+
+	print(f"\rLoaded 1/{len(paths)} images",end="",flush=True)
+
+	for i,path in enumerate(paths[1:],start=1):
+		try:
+			frame = read_image(path)
+		except rawpy.LibRawDataError as e:
+			raise RuntimeError(f"Failed to decode image {i+1}/{len(paths)}: {path}") from e
+
+		if frame.shape != images.shape[1:] or frame.dtype != images.dtype:
+			raise ValueError(f"Image shape or dtype mismatch: {path}")
+
+		images[i] = frame
+		del frame
+		print(f"\rLoaded {i+1}/{len(paths)} images",end="",flush=True)
+
+	print()
+	return images
 
 def smoothen(data,width):
 	kernel = blackman(width)
