@@ -1,8 +1,11 @@
 import numpy as np
-from scipy.signal import argrelmax, argrelmin
-from colonyscopy.tools import smoothen, color_distance, expand_mask, color_sum, circle_mask, radial_profile, excentricity
+from scipy.signal import argrelmax, find_peaks, peak_prominences
+from .tools import smoothen, color_distance, expand_mask, color_sum, circle_mask, radial_profile
 import matplotlib.pyplot as plt
-from warnings import warn
+from scipy.ndimage import gaussian_filter1d
+from matplotlib.patches import Rectangle
+import ipywidgets as widgets
+from IPython.display import display
 
 class ColonyscopyFailedHeuristic(Exception):
 	"""
@@ -694,9 +697,387 @@ class Plate(object):
 		"""
 		return self.colonies[arg]
 
-	def localise_colonies(self,*args,**kwargs):
+
+class Image_cropping:
+	"""
+		Detects the colony grid using Fourier analysis and crops image time series.
+
+		Parameters
+		----------
+		plate : Plate
+			Plate object providing the mean image, colony layout and background.
+
+		Attributes
+		----------
+		fourier_results : dict or None
+			Detected colony positions, spacing and alignment information.
+
+		fourier_quality : dict or None
+			Results of the automatic grid quality assessment.
+
+		cropped_image : numpy.ndarray or None
+			Cropped image time series.
+
+		crop_bounds : tuple of int or None
+			Crop boundaries (y_start, y_end, x_start, x_end).
+
+		crop_approved : bool
+			Whether the proposed crop has been accepted.
+	"""
+
+	def __init__(self, plate):
+		#parameters
+		self.plate = plate
+		self.layout = plate.layout
+		#attributes
+		self.fourier_results = None
+		self.fourier_quality = None
+		self.cropped_image = None
+		self.crop_bounds = None
+		self.crop_approved = False
+
+	def auto_crop_fourier(self, plot=True):
 		"""
-			Calls colony.localise for all colonies (with the respective arguments).
+			Automatically detects and evaluates the Fourier colony cropping.
+			Requests manual confirmation if the quality checks fail.
+
+			Parameters
+			----------
+			plot : bool, optional
+				Whether to display Fourier detection plots. Default is True.
+
+			Returns
+			-------
+			numpy.ndarray or None
+				Cropped time series if accepted, otherwise None.
 		"""
-		for colony in self.all_colonies():
-			colony.localise(*args,**kwargs)
+		self.cropped_image = None
+		self.crop_bounds = None
+		self.crop_approved = False
+
+		self.detect_grid_fourier(plot=plot)
+		quality = self._evaluate_fourier_quality()
+
+		for name in ["Rows", "Columns"]:
+			print(f"{name}: {quality[name]['matched']}/{quality[name]['expected']} peaks matched")
+
+		if quality["all_passed"]:
+			cropped = self.crop_fourier()
+			self.crop_approved = True
+			return cropped
+
+		else:
+			print("Automatic Fourier quality assessment failed.")
+			print("Manual inspection required.")
+			return self.manual_fourier_quality()
+
+	def detect_grid_fourier(self, min_spacing_factor=0.75, max_spacing_factor=1.25,plot=False):
+		"""
+			Detects the colony grid using Fourier analysis.
+
+			Uses the Fourier transform to estimate the spacing between colonies.
+			The grid positions are then optimized based on the intensity profile and refined by fitting a line to nearby detected peaks.
+
+			Parameters
+			----------
+			min_spacing_factor : float, optional
+				Lower bound for colony spacing relative to expected spacing.
+
+			max_spacing_factor : float, optional
+				Upper bound for colony spacing relative to expected spacing.
+
+			plot : bool, optional
+				Whether to plot intensity profiles, colony positions,
+				and proposed crop boundaries.
+
+			Returns
+			-------
+			dict
+				Fourier detection for rows and columns.
+		"""
+		intensities = color_distance(self.plate.temp_mean,self.plate.background)
+		profiles = [np.mean(intensities,axis=1),np.mean(intensities,axis=0)]
+		results = {}
+
+		for name, profile, n_colonies in zip(["Rows", "Columns"],profiles,self.layout):
+			n = len(profile)
+			signal = profile-np.mean(profile)
+			fft = np.abs(np.fft.rfft(signal))
+			frequencies = np.fft.rfftfreq(n)
+
+			expected_spacing = n/n_colonies
+			min_spacing = expected_spacing*min_spacing_factor
+			max_spacing = expected_spacing*max_spacing_factor
+			valid = ((frequencies>=1/max_spacing)&(frequencies<=1/min_spacing))
+
+			candidate_indices = np.flatnonzero(valid)
+			candidate_peaks, _ = find_peaks(fft[valid])
+
+			if len(candidate_peaks) == 0:
+				raise ColonyscopyFailedHeuristic(f"Could not determine colony spacing along {name.lower()}: no Fourier peaks detected.")
+
+			best = candidate_indices[candidate_peaks[np.argmax(fft[valid][candidate_peaks])]]
+			spacing = 1/frequencies[best]
+
+			smoothed = gaussian_filter1d(profile,sigma=3)
+			offsets = np.arange(n_colonies)*spacing
+			best_score = -np.inf
+			best_centres = None
+			max_start = int(np.floor(n-1-offsets[-1]))
+
+			for start in range(max_start+1):
+				centres = np.rint(start+offsets).astype(int)
+				score = np.mean(smoothed[centres])
+
+				if score > best_score:
+					best_score = score
+					best_centres = centres
+
+			peaks, _ = find_peaks(smoothed)
+			matched = np.full(n_colonies, np.nan)
+			search_radius = spacing/1.5
+
+			for i, centre in enumerate(best_centres):
+				nearby = peaks[np.abs(peaks-centre)<=search_radius]
+				if len(nearby):
+					matched[i] = nearby[np.argmin(np.abs(nearby-centre))]
+
+			valid_matches = np.isfinite(matched)
+			indices = np.arange(n_colonies)
+
+			if np.sum(valid_matches) >= 3:
+				corrected_spacing, corrected_start = np.polyfit(indices[valid_matches], matched[valid_matches],deg=1)
+				corrected_centres = (corrected_start+indices*corrected_spacing)
+
+			else:
+				corrected_spacing = spacing
+				corrected_centres = best_centres.astype(float)
+
+			final_matched = np.full(n_colonies, np.nan)
+
+			for i, centre in enumerate(corrected_centres):
+				nearby = peaks[np.abs(peaks - centre) <= search_radius]
+
+				if len(nearby):final_matched[i] = nearby[np.argmin(np.abs(nearby - centre))]
+
+			if plot:
+				crop_start, crop_end = self._get_fourier_bounds(corrected_centres,corrected_spacing,n)
+
+			results[name] = {"spacing": corrected_spacing,"positions": corrected_centres,"matched_count": int(np.sum(np.isfinite(final_matched))),}
+
+			if plot:
+				fig, ax = plt.subplots(figsize=(15, 4))
+				ax.plot(profile,color="black",alpha=0.6)
+				for centre in corrected_centres:
+					ax.axvline(centre,color="red",alpha=0.4,linewidth=1)
+
+				ax.axvline(crop_start,color="blue",linestyle="--",linewidth=2)
+				ax.axvline(crop_end,color="blue",linestyle="--",linewidth=2)
+				ax.annotate(f"Start: {crop_start} px",xy=(crop_start, 1),xycoords=("data", "axes fraction"),xytext=(5, 10),textcoords="offset points", ha="right",va="top",color="blue",fontsize=10)
+				ax.annotate(f"End: {crop_end} px",xy=(crop_end, 1),xycoords=("data", "axes fraction"),xytext=(-5, 10),textcoords="offset points",ha="left",va="top",color="blue",fontsize=10)
+				ax.set_title(f"{name}")
+				ax.set_xlabel("Position (pixels)")
+				ax.set_ylabel("Intensity")
+				plt.tight_layout()
+				plt.show()
+
+		self.fourier_results = results
+		return results
+
+	def _evaluate_fourier_quality(self):
+		"""
+		Checks whether the expected number of colony peaks was reached.
+
+		Returns
+		-------
+		dict
+			Quality assessment for rows and columns, containing the number of matched and expected peaks and a Boolean status for each axis.
+			The ``all_passed`` entry indicates whether both axes passed.
+		"""
+		quality = {}
+
+		for name, expected in zip(["Rows", "Columns"], self.layout):
+			matched = self.fourier_results[name]["matched_count"]
+			quality[name] = {"matched": matched, "expected": expected, "passed": matched == expected}
+
+		quality["all_passed"] = quality["Rows"]["passed"] and quality["Columns"]["passed"]
+		self.fourier_quality = quality
+
+		return quality
+
+	def crop_fourier(self):
+		"""
+			Crops the plate image series half a colony spacing beyond the first and last detected colony centres.
+			Returns
+			-------
+			numpy.ndarray
+				Cropped image time series.
+
+			Raises
+			------
+			ValueError
+				If the Fourier grid has not been detected.
+		"""
+		timeseries = self.plate.images
+		if self.fourier_results is None:
+			raise ValueError("Run detect_grid_fourier() before cropping.")
+
+		rows = self.fourier_results["Rows"]["positions"]
+		cols = self.fourier_results["Columns"]["positions"]
+		row_spacing = self.fourier_results["Rows"]["spacing"]
+		col_spacing = self.fourier_results["Columns"]["spacing"]
+
+		y_start, y_end = self._get_fourier_bounds(rows, row_spacing, timeseries.shape[1])
+		x_start, x_end = self._get_fourier_bounds(cols, col_spacing, timeseries.shape[2])
+
+		self.crop_bounds = (y_start, y_end, x_start, x_end)
+		self.cropped_image = timeseries[:, y_start:y_end, x_start:x_end, :].copy()
+
+		return self.cropped_image
+
+	def _get_fourier_bounds(self, positions, spacing, image_length):
+		"""
+			Calculates crop boundaries from colony positions and spacing.
+
+			Parameters
+			----------
+			positions : numpy.ndarray
+				Detected colony centre positions along one axis.
+
+			spacing : float
+				Distance between neighbouring colony centres in pixels.
+
+			image_length : int
+				Image dimension along the corresponding axis.
+
+			Returns
+			-------
+			tuple of int
+				Start and end coordinates of the crop.
+		"""
+
+		start = max(0,int(np.floor(positions[0]-spacing/2)))
+		end = min(image_length,int(np.ceil(positions[-1]+spacing/2)))
+		if start >= end:raise ValueError("Invalid crop boundaries.")
+
+		return start, end
+
+	def manual_fourier_quality(self):
+		"""
+			Displays the Fourier-derived crop for manual inspection. Allows the user to accept, reject or manually adjust the crop boundaries.
+
+			Returns
+			-------
+			numpy.ndarray or None
+				Cropped image time series if accepted, otherwise None. When manually adjusting the crop, the accepted result is stored in ``self.cropped_image``.
+		"""
+		timeseries = self.plate.images
+		cropped = self.crop_fourier()
+
+		fig, ax = plt.subplots(figsize=(10, 7))
+		ax.imshow(cropped[-1])
+		ax.set_title("Proposed Fourier crop")
+		plt.tight_layout()
+		plt.show()
+
+		answer = input("Accept Fourier crop or adjust boundaries? (y/a/n):: ").strip().lower()
+
+		if answer in ("y", "yes"):
+			self.crop_approved = True
+			return cropped
+		elif answer in ("a", "adjust"):
+			self.adjust_fourier_crop()
+			return None
+		else:
+			self.cropped_image = None
+			self.crop_bounds = None
+			self.crop_approved = False
+			print("Fourier crop rejected.")
+			return None
+
+	def adjust_fourier_crop(self):
+		"""
+			Allows manual adjustment of Fourier crop boundaries using Jupyter widgets.
+			The accepted crop is stored in self.cropped_image, and self.crop_approved is set to True.
+		"""
+		timeseries = self.plate.images
+		original =self.crop_bounds
+
+		top = widgets.BoundedIntText(value=original[0],min=0,max=timeseries.shape[1],description="Top:")
+		bottom = widgets.BoundedIntText(value=original[1],min=0,max=timeseries.shape[1],description="Bottom:")
+		left = widgets.BoundedIntText(value=original[2],min=0,max=timeseries.shape[2],description="Left:")
+		right = widgets.BoundedIntText(value=original[3],min=0,max=timeseries.shape[2],description="Right:")
+
+		fig, ax = plt.subplots(figsize=(12, 8))
+		ax.imshow(timeseries[-1])
+		rectangle = Rectangle((original[2], original[0]),original[3]-original[2], original[1]-original[0],fill=False,edgecolor="yellow",linewidth=2)
+		ax.add_patch(rectangle)
+		ax.set_title("Manual Fourier crop adjustment")
+
+		plt.close(fig)
+		preview = widgets.Output()
+		status = widgets.Output()
+
+		def update_preview(change=None):
+			y1, y2, x1, x2 = top.value,bottom.value,left.value,right.value
+			rectangle.set_xy((x1,y1))
+			rectangle.set_width(x2-x1)
+			rectangle.set_height(y2-y1)
+
+			rectangle.set_edgecolor("yellow" if y1<y2 and x1<x2 else "red")
+
+			with preview:
+				preview.clear_output(wait=True)
+				display(fig)
+
+		for field in (top,bottom,left,right):
+			field.observe(update_preview, names="value")
+
+		accept_button = widgets.Button(description="Accept crop",button_style="success")
+		reset_button = widgets.Button(description="Reset")
+		cancel_button = widgets.Button(description="Cancel",button_style="danger")
+
+		def accept(button):
+			y1, y2, x1, x2 = top.value,bottom.value,left.value,right.value
+
+			if y1 >= y2 or x1 >= x2:
+				with status:
+					status.clear_output()
+					print("Invalid crop boundaries.")
+				return
+
+			self.crop_bounds = (y1, y2, x1, x2)
+			self.cropped_image = timeseries[:, y1:y2, x1:x2, :].copy()
+			self.crop_approved = True
+
+			with status:
+				status.clear_output()
+				print("Crop accepted!")
+				print("Final crop boundaries:",self.crop_bounds)
+				print("Cropped image shape:",self.cropped_image.shape)
+
+		def reset(button):
+			for field, value in zip((top,bottom,left,right),original):
+				field.value = value
+
+			with status:
+				status.clear_output()
+
+		def cancel(button):
+			self.cropped_image = None
+			self.crop_bounds = None
+			self.crop_approved = False
+
+			with status:
+				status.clear_output()
+				print("Crop adjustment cancelled.")
+
+		accept_button.on_click(accept)
+		reset_button.on_click(reset)
+		cancel_button.on_click(cancel)
+		self._crop_widgets = (top, bottom, left, right, accept_button, reset_button, cancel_button, preview, status)
+		self.crop_approved = False
+		self.cropped_image = None
+
+		display(widgets.VBox([widgets.HBox([top, bottom]),widgets.HBox([left, right]),widgets.HBox([accept_button, reset_button, cancel_button]),status,preview]))
+		update_preview()
