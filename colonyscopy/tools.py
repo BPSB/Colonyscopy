@@ -77,11 +77,39 @@ def load_images(paths):
 	return images
 
 def smoothen(data,width):
+	"""
+		Parameters
+		----------
+		data : numpy.ndarray
+			One-dimensional array to smooth.
+
+		width : int
+			Length of the smoothing window.
+
+		Returns
+		-------
+		numpy.ndarray
+			One-dimensional array of smoothed values obtained by using a Blackman window and convolution.
+	"""
 	kernel = blackman(width)
 	kernel /= np.sum(kernel)
 	return np.convolve(data,kernel,mode="same")
 
 def smoothen_image(image,width):
+	"""
+		Parameters
+		----------
+		image : numpy.ndarray
+			Image with shape (height, width, 3).
+
+		width : int
+			Length of the smoothing window along each axis.
+
+		Returns
+		-------
+		numpy.ndarray
+			Three-dimensional array, with the same shape and dtype as the input, obtained using a two-dimensional Blackman window.
+	"""
 	kernel = blackman(width)[:,None]*blackman(width)
 	kernel /= np.sum(kernel)
 	result = np.empty_like(image)
@@ -91,7 +119,18 @@ def smoothen_image(image,width):
 
 def expand_mask(mask,width):
 	"""
-	Expands `mask` (array of booleans) by setting all elments within a distance of `width` to a True element to True.
+		Parameters
+		----------
+		mask : numpy.ndarray
+			Two-dimensional boolean mask, where True indicates pixels to expand.
+
+		width : int
+			Expansion radius in pixels.
+
+		Returns
+		-------
+		numpy.ndarray
+			Two-dimensional boolean mask with shape (height, width), where True indicates pixels within the expanded regions.
 	"""
 	centre = np.array([width,width])
 	coordinates = np.indices((2*width+1,2*width+1))
@@ -100,74 +139,155 @@ def expand_mask(mask,width):
 	return convolve2d(mask,kernel,mode="same").astype(bool)
 
 def color_sum(data):
+	"""
+		Parameters
+		----------
+		data : numpy.ndarray
+			Array with colour channels along the last axis.
+
+		Returns
+		-------
+		numpy.ndarray
+			Array of summed intensities with the colour axis removed.
+	"""
 	return np.sum(data, axis=-1)
 
 def color_distance(data1,data2):
 	"""
-	Determines the L1 norm between the two input arrays in color space. The color axis must be the last axis.
+		Parameters
+		----------
+		data1, data2 : numpy.ndarray
+			Arrays with compatible shapes and with colour channels along the last axis.
+
+		Returns
+		-------
+		numpy.ndarray
+			Sum of absolute colour-channel differences between colour vectors.
 	"""
 	return np.sum(np.abs(np.subtract(data1,data2,dtype=float)),axis=-1)
 
-class TestColorDistance(object):
-	def test_symmetry(self):
-		size = (200,100,3)
-		x = np.random.randint(0,256,size=size,dtype=np.uint8)
-		y = np.random.randint(0,256,size=size,dtype=np.uint8)
-		np.testing.assert_array_equal(
-				color_distance(x,y),
-				color_distance(y,x),
-			)
-
-	def test_shape(self):
-		size = (200,100,3)
-		x = np.random.randint(0,256,size=size,dtype=np.uint8)
-		y = np.random.randint(0,256,size=size,dtype=np.uint8)
-		np.testing.assert_array_equal(color_distance(x,y).shape,size[:-1])
-
-def show_image(array,mode="RGB"):
-	img = Image.fromarray(array,mode)
-	img.show()
-	time.sleep(3)
-	for proc in psutil.process_iter():
-		if proc.name() == "display":
-			proc.kill()
-
 def gaussian_profile(abscissae,position,width):
+	"""
+		Parameters
+		----------
+		abscissae : numpy.ndarray
+			Positions at which the Gaussian is evaluated.
+
+		position : float
+			Centre of the Gaussian.
+
+		width : float
+			Standard deviation of the Gaussian.
+
+		Returns
+		-------
+		numpy.ndarray
+			Gaussian weights normalised to sum to one.
+	"""
 	profile = np.exp(-((abscissae-position)/width)**2/2)
 	return profile/sum(profile)
 
 def radial_profile(data,centre,speckle_mask=None,smooth_width=0.5,npoints=60):
-    radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
-    radii = ma.masked_array(radii, mask=speckle_mask)
-    data = ma.masked_array(data, mask=speckle_mask)
-    r_max = np.max(radii)
-    abscissae = np.linspace(0,r_max,npoints)
-    sums = np.zeros_like(abscissae)
-    normalisation = np.zeros_like(abscissae)
-    for i,radii_line in enumerate(radii):
-        for j,radius in enumerate(radii_line):
-            if not data[i,j] is ma.masked:
-                profile = gaussian_profile(abscissae,radius,smooth_width)
-                normalisation += profile
-                sums += profile*data[i,j]
-    return abscissae,sums/normalisation
+	"""
+		Parameters
+		----------
+		data : numpy.ndarray
+			Two-dimensional intensity image.
+
+		centre : array-like of float
+			Centre coordinates (row, column).
+
+		speckle_mask : boolean numpy.ndarray, optional
+			Boolean mask where True indicates excluded pixels. Default is None.
+
+		smooth_width : float, optional
+			Standard deviation of the Gaussian radial weights, in pixels. Default is 0.5.
+
+		npoints : int, optional
+			Number of radial positions. Default is 60.
+
+		Returns
+		-------
+		abscissae : numpy.ndarray
+			Radial distances from the centre.
+
+		values : numpy.ndarray
+			One-dimensional array containing Gaussian-weighted mean intensity at each radial distance.
+	"""
+	radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None]))
+	radii = ma.masked_array(radii, mask=speckle_mask)
+	data = ma.masked_array(data, mask=speckle_mask)
+
+	r_max = np.max(radii)
+	abscissae = np.linspace(0,r_max,npoints)
+	sums = np.zeros_like(abscissae)
+	normalisation = np.zeros_like(abscissae)
+
+	for i,radii_line in enumerate(radii):
+		for j,radius in enumerate(radii_line):
+			if not data[i,j] is ma.masked:
+				profile = gaussian_profile(abscissae,radius,smooth_width)
+				normalisation += profile
+				sums += profile*data[i,j]
+	return abscissae,sums/normalisation
 
 def excentricity(data,centre,speckle_mask=None,smooth_width=0.5,npoints=60):
-    abscissae,values = radial_profile(data,centre,speckle_mask,smooth_width=2.0,npoints=60)
-    radii = np.hypot( *( np.indices(data.shape)-np.asarray(centre)[:,None,None] ) )
-    radii = ma.masked_array(radii, mask=speckle_mask)
-    data = ma.masked_array(data, mask=speckle_mask)
+	"""
+		Parameters
+		----------
+		data : numpy.ndarray
+			Two-dimensional intensity image.
 
-    sumsq = 0
-    for i,line in enumerate(data):
-        for j,intensity in enumerate(line):
-            if not data[i,j] is ma.masked:
-                expected_intensity = np.interp(radii[i,j],abscissae,values)
-                sumsq += (intensity - expected_intensity)**2
-    return np.sqrt(sumsq)/data.size
+		centre : array-like of float
+			Centre coordinates (row, column).
+
+		speckle_mask : boolean numpy.ndarray, optional
+			Boolean mask where True indicates excluded pixels. Default is None.
+
+		smooth_width : float, optional
+			Standard deviation of the Gaussian radial weights, in pixels. Default is 0.5.
+
+		npoints : int, optional
+			Number of radial positions. Default is 60.
+
+		Returns
+		-------
+		float
+			Square root of the summed squared deviations from the radial profile, divided by the number of valid pixels.
+	"""
+	abscissae,values = radial_profile(data,centre,speckle_mask,smooth_width=smooth_width,npoints=npoints)
+	radii = np.hypot(*(np.indices(data.shape)-np.asarray(centre)[:,None,None]))
+	radii = ma.masked_array(radii, mask=speckle_mask)
+	data = ma.masked_array(data, mask=speckle_mask)
+
+	sumsq = 0
+	for i,line in enumerate(data):
+		for j,intensity in enumerate(line):
+			if not data[i,j] is ma.masked:
+				expected_intensity = np.interp(radii[i,j],abscissae,values)
+				sumsq += (intensity - expected_intensity)**2
+	valid = ~ma.getmaskarray(data)
+	return np.sqrt(sumsq)/np.count_nonzero(valid)
 
 def circle_mask(resolution, centre, width):
-    circle_mask = np.zeros(resolution, dtype=bool)
-    circle_mask[tuple(centre)] = True
-    circle_mask = expand_mask(circle_mask, width)
-    return circle_mask
+	"""
+		Parameters
+		----------
+		resolution : tuple of int
+			Mask dimensions (height, width).
+
+		centre : array-like of int
+			Centre coordinates (row, column).
+
+		width : int
+			Radius of the circle in pixels.
+
+		Returns
+		-------
+		numpy.ndarray
+			Two-dimensional boolean mask with the same shape as ``resolution``, where True indicates pixels inside the circle.
+	"""
+	circle_mask = np.zeros(resolution, dtype=bool)
+	circle_mask[tuple(centre)] = True
+	circle_mask = expand_mask(circle_mask, width)
+	return circle_mask
