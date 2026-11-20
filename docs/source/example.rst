@@ -34,7 +34,7 @@ Provide the image paths in chronological order.
 Automatic cropping
 ------------------
 
-Specify the expected number of colony rows and columns and selects the first image as a reference background. Fourier analysis is used to detect the colony grid and determine the cropping boundaries.
+Specify the expected number of colony rows and columns, and use the first image as the reference background. Fourier analysis is used to detect the colony grid and determine the cropping boundaries.
 
 .. code-block:: python
 
@@ -77,7 +77,9 @@ After accepting the adjusted boundaries, the cropped images are available throug
 Colony analysis
 ---------------
 
-After the cropping boundaries have been accepted, create a new plate from the cropped images and identify individual colonies.
+After the cropping boundaries have been accepted, create a new plate from the cropped images. 
+Before accessing individual colonies, a speckle mask must be created explicitly using :meth:`create_speckle_mask()`. 
+Once the mask has been created, individual colonies can be initialized using :meth:`create_colonies()`.
 
 .. code-block:: python
 
